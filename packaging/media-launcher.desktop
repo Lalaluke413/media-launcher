@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Videos
+Comment=Browse video folders and play with mpv
+Exec=media-launcher
+Icon=video-x-generic
+Terminal=false
+Categories=AudioVideo;Video;Player;
+StartupWMClass=media-launcher
