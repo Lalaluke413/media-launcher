@@ -2,7 +2,6 @@ use std::{
     ffi::OsStr,
     fs::OpenOptions,
     os::unix::fs::OpenOptionsExt,
-    path::Path,
     process::{Child, Command, Stdio},
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -16,7 +15,7 @@ impl Player {
     pub fn active(&self) -> bool {
         self.child.is_some()
     }
-    pub fn launch(&mut self, executable: &OsStr, path: &Path) -> Result<(), String> {
+    pub fn launch(&mut self, executable: &OsStr, media: &OsStr) -> Result<(), String> {
         if self.active() {
             return Err("Playback is already active".into());
         }
@@ -41,7 +40,7 @@ impl Player {
             Command::new(executable)
                 .arg("--fullscreen")
                 .arg("--")
-                .arg(path)
+                .arg(media)
                 .stdin(Stdio::null())
                 .stdout(Stdio::from(log))
                 .stderr(Stdio::from(stderr))
@@ -98,12 +97,18 @@ mod tests {
         let mut player = Player::default();
         assert!(
             player
-                .launch(OsStr::new("/nonexistent/mpv"), &media)
+                .launch(OsStr::new("/nonexistent/mpv"), media.as_os_str())
                 .is_err()
         );
         assert!(!player.active());
-        player.launch(script.as_os_str(), &media).unwrap();
-        assert!(player.launch(script.as_os_str(), &media).is_err());
+        player
+            .launch(script.as_os_str(), media.as_os_str())
+            .unwrap();
+        assert!(
+            player
+                .launch(script.as_os_str(), media.as_os_str())
+                .is_err()
+        );
         let deadline = Instant::now() + Duration::from_secs(3);
         loop {
             if let Some(result) = player.poll() {
@@ -115,7 +120,7 @@ mod tests {
         }
         assert!(!player.active());
         player
-            .launch(executable("true").as_os_str(), &media)
+            .launch(executable("true").as_os_str(), media.as_os_str())
             .unwrap();
         loop {
             if let Some(result) = player.poll() {

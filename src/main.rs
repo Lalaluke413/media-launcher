@@ -1,11 +1,13 @@
 mod browser;
 mod input;
 mod player;
+mod web;
 
 use eframe::egui;
 use input::{Action, Controls, Input};
 use std::{
     ffi::OsString,
+    net::SocketAddr,
     path::PathBuf,
     sync::{
         Arc, Mutex,
@@ -18,6 +20,7 @@ struct Options {
     root: PathBuf,
     mpv: OsString,
     scale: f32,
+    listen: SocketAddr,
 }
 impl Options {
     fn parse() -> Result<Option<Self>, String> {
@@ -25,12 +28,13 @@ impl Options {
             root: "/srv/downloads/complete".into(),
             mpv: "/run/current-system/sw/bin/mpv".into(),
             scale: 1.0,
+            listen: "0.0.0.0:8765".parse().unwrap(),
         };
         let mut args = std::env::args_os().skip(1);
         while let Some(arg) = args.next() {
             if arg == "--help" || arg == "-h" {
                 println!(
-                    "media-launcher [--root PATH] [--mpv EXECUTABLE] [--ui-scale NUMBER]\nDefaults: /srv/downloads/complete, /run/current-system/sw/bin/mpv, 1.0\nUI scale must be between 0.5 and 4.0."
+                    "media-launcher [--root PATH] [--mpv EXECUTABLE] [--ui-scale NUMBER] [--listen ADDRESS]\nDefaults: /srv/downloads/complete, /run/current-system/sw/bin/mpv, 1.0, 0.0.0.0:8765\nUI scale must be between 0.5 and 4.0."
                 );
                 return Ok(None);
             }
@@ -47,6 +51,12 @@ impl Options {
                     if !options.scale.is_finite() || !(0.5..=4.0).contains(&options.scale) {
                         return Err("--ui-scale must be between 0.5 and 4.0".into());
                     }
+                }
+                Some("--listen") => {
+                    options.listen = args
+                        .next()
+                        .and_then(|v| v.to_str().and_then(|s| s.parse().ok()))
+                        .ok_or("--listen requires an IP:PORT address")?;
                 }
                 _ => return Err(format!("Unknown option: {}", arg.to_string_lossy())),
             }
@@ -126,6 +136,7 @@ struct App {
     input: Input,
     pads: Gamepads,
     ensure_visible: bool,
+    web: web::Server,
 }
 impl App {
     fn new(cc: &eframe::CreationContext<'_>, options: Options) -> Self {
@@ -150,6 +161,7 @@ impl App {
             input: Input::new(Instant::now()),
             pads: Gamepads::new(cc.egui_ctx.clone()),
             ensure_visible: true,
+            web: web::Server::new(options.listen, cc.egui_ctx.clone()),
         }
     }
     fn action(&mut self, action: Action, ctx: &egui::Context) {
@@ -193,7 +205,7 @@ impl App {
                     let result = self
                         .browser
                         .media_path(&entry)
-                        .and_then(|path| self.player.launch(&self.mpv, &path));
+                        .and_then(|path| self.player.launch(&self.mpv, path.as_os_str()));
                     match result {
                         Ok(()) => self.input.block(),
                         Err(e) => {
@@ -208,6 +220,19 @@ impl App {
 }
 impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, _: &mut eframe::Frame) {
+        while let Some(request) = self.web.try_recv() {
+            let result = if self.player.active() {
+                Err("Playback is already active".into())
+            } else {
+                self.player
+                    .launch(&self.mpv, std::ffi::OsStr::new(request.url.as_ref()))
+            };
+            if result.is_ok() {
+                self.input.block();
+            }
+            let _ = request.reply.send(result);
+        }
+
         if self.player.active() {
             if ctx.input(|i| i.viewport().close_requested()) {
                 ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
