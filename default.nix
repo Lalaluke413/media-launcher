@@ -7,6 +7,9 @@ in
 pkgs.rustPlatform.buildRustPackage {
   pname = "media-launcher";
   version = "0.1.0";
+
+  RUST_MIN_STACK = "67108864";
+
   src = pkgs.lib.cleanSourceWith {
     src = ./.;
     filter = path: type:
