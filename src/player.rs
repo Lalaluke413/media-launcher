@@ -38,6 +38,7 @@ impl Player {
         self.log = Some(log_path);
         self.child = Some(
             Command::new(executable)
+                .env_remove("LD_PRELOAD")
                 .arg("--fullscreen")
                 .arg("--")
                 .arg(media)
