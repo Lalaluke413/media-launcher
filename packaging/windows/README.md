@@ -6,6 +6,7 @@ Prerequisites:
 - Rust 1.88+ with target `x86_64-pc-windows-msvc` (install with rustup if needed).
 - Visual Studio Build Tools: desktop C++ workload and Windows SDK.
 - 7-Zip (7z.exe on PATH or in its default Program Files location).
+- Windows' `curl.exe` on PATH (included with current Windows 10/11).
 - Inno Setup **6.3 or newer**, only if building the installer.
 
 From the repository root:
@@ -30,8 +31,10 @@ and assembles a baseline x64 bundle with libmpv, yt-dlp, Deno and the Vulkan loa
 required by this libmpv build. No system Vulkan installation is performed. It copies license
 texts and a dependency manifest, then creates a ZIP. No downloads use `latest`.
 Generated files go to `dist/windows/`; downloads are cached under
-`target/packaging/downloads/`. Move/remove the versioned output folder before
-retrying a build; partial outputs are retained for diagnosis.
+`target/packaging/downloads/`. Downloads use `curl.exe`, first write to a temporary
+file, and enter the cache only after checksum verification. Invalid cached files
+are downloaded again automatically. Earlier/partial bundles are moved to a
+`.previous-<id>` folder when rebuilding; these can be removed when no longer needed.
 
 ## Please test on Windows now
 

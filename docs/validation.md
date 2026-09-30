@@ -1,5 +1,16 @@
 # Packaging first attempt — 2026-09-29
 
+Windows follow-up: the user reported a successful MSVC release build, followed
+by a libmpv checksum mismatch from the Invoke-WebRequest download. The file was
+31,490,080 bytes with SHA-256 `dde9661bebb5a6042bfed26ff04d0c2bbf13cad95535b55a119c932fe0aa84f1`.
+The user's fresh curl.exe download matched the pinned
+`81795d759e01016f1550fd71651a1a5d59ab5c28ef31c0b6793224e9cff39459`;
+a fresh Linux download and GitHub release metadata also matched that pin.
+The bundle script now uses curl.exe, verifies temporary files before caching,
+replaces invalid cache entries, and preserves earlier bundles when retrying.
+Checksums remain unchanged. The revised complete script still needs Windows
+execution; the reason the first download's bytes differed has not been established.
+
 Windows packaging adds a PowerShell bundle builder, pinned SHA-256-verified
 libmpv/yt-dlp/Deno/Vulkan-loader downloads, and an Inno Setup per-user installer.
 The Arch VCS PKGBUILD declares system dependencies. No CI or updater was added.

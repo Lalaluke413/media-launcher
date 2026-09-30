@@ -18,7 +18,7 @@ if ($LASTEXITCODE -ne 0) { throw 'cargo metadata failed. Install Rust with the M
 $metadata = $metadata | ConvertFrom-Json
 $version = ($metadata.packages | Where-Object name -eq 'media-launcher').version
 $bundle = Join-Path $dist "media-launcher-$version-windows-x64"
-if (Test-Path $bundle) { throw "Output already exists: $bundle. Move or remove it before rebuilding." }
+$curl = (Get-Command curl.exe -ErrorAction Stop).Source
 if (-not $SevenZip) {
     $command = Get-Command 7z.exe -ErrorAction SilentlyContinue
     if ($command) { $SevenZip = $command.Source }
@@ -32,18 +32,44 @@ try {
     & cargo build --locked --release --target x86_64-pc-windows-msvc --manifest-path (Join-Path $repo 'Cargo.toml')
     if ($LASTEXITCODE -ne 0) { throw 'Release build failed. Install the x64 MSVC Rust target and Visual Studio C++ Build Tools.' }
 } finally { $env:RUSTFLAGS = $oldFlags }
+# Verify all downloads before creating or replacing the output bundle.
+foreach ($asset in $manifest.assets) {
+    $download = Join-Path $cache $asset.file
+    $cachedHash = $null
+    if (Test-Path $download) {
+        $cachedHash = (Get-FileHash $download -Algorithm SHA256).Hash.ToLowerInvariant()
+    }
+    if ($cachedHash -eq $asset.sha256) { continue }
+    if ($cachedHash) {
+        Write-Warning "Replacing invalid cached $($asset.file): expected $($asset.sha256), got $cachedHash"
+    }
+    Write-Host "Downloading $($asset.name) $($asset.version)"
+    $partial = "$download.partial"
+    try {
+        # Use curl.exe explicitly: Windows PowerShell aliases 'curl' to
+        # Invoke-WebRequest, which produced a different archive in native testing.
+        & $curl --fail --location --retry 3 --retry-delay 1 --output $partial $asset.url
+        if ($LASTEXITCODE -ne 0) { throw "Download failed: $($asset.url)" }
+        $actualHash = (Get-FileHash $partial -Algorithm SHA256).Hash.ToLowerInvariant()
+        if ($actualHash -ne $asset.sha256) {
+            $bytes = (Get-Item $partial).Length
+            throw "Checksum mismatch for $($asset.file) ($bytes bytes). Expected $($asset.sha256), got $actualHash. URL: $($asset.url)"
+        }
+        Move-Item -LiteralPath $partial -Destination $download -Force
+    } finally {
+        if (Test-Path $partial) { Remove-Item -LiteralPath $partial -Force }
+    }
+}
+# Preserve earlier/partial bundles while allowing a failed build to be retried.
+if (Test-Path $bundle) {
+    $previous = "$bundle.previous-$([Guid]::NewGuid().ToString('N'))"
+    Move-Item -LiteralPath $bundle -Destination $previous
+    Write-Host "Previous output preserved at: $previous"
+}
 New-Item -ItemType Directory -Path $bundle | Out-Null
 Copy-Item (Join-Path $metadata.target_directory 'x86_64-pc-windows-msvc/release/media-launcher.exe') $bundle
 foreach ($asset in $manifest.assets) {
     $download = Join-Path $cache $asset.file
-    if (-not (Test-Path $download)) {
-        Write-Host "Downloading $($asset.name) $($asset.version)"
-        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-        Invoke-WebRequest -UseBasicParsing -Uri $asset.url -OutFile $download
-    }
-    if ((Get-FileHash $download -Algorithm SHA256).Hash.ToLowerInvariant() -ne $asset.sha256) {
-        throw "Checksum mismatch: $download. Delete this cached file and retry."
-    }
     switch ($asset.name) {
         'libmpv' {
             $unpack = Join-Path $bundle '_mpv'
