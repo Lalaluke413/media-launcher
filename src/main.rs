@@ -551,6 +551,32 @@ impl eframe::App for App {
             self.playback_ui(ctx);
             return;
         }
+        self.phone.refresh(self.web.endpoint());
+        ctx.request_repaint_after(Duration::from_secs(10));
+        let phone_only = self.browser.configured_root.is_none();
+        let qr_size = if phone_only { 320.0 } else { 180.0 };
+        let phone_width = (qr_size + 24.0_f32).min(ctx.available_rect().width() * 0.4);
+        egui::SidePanel::right("phone_connection")
+            .resizable(false)
+            .exact_width(phone_width)
+            .show(ctx, |ui| {
+                ui.add_space(12.0);
+                egui::ScrollArea::vertical().show(ui, |ui| {
+                    self.phone.show_sized(ui, qr_size);
+                    if self.phone.multiple() {
+                        ui.add_space(8.0);
+                        if ui
+                            .button(egui::RichText::new("Next address").size(18.0))
+                            .clicked_by(egui::PointerButton::Primary)
+                        {
+                            self.phone.cycle();
+                        }
+                        ui.label(
+                            egui::RichText::new("Or select Next phone address in Menu.").size(14.0),
+                        );
+                    }
+                });
+            });
         egui::TopBottomPanel::top("path").show(ctx, |ui| {
             ui.add_space(12.0);
             ui.horizontal(|ui| {
@@ -559,12 +585,11 @@ impl eframe::App for App {
                     self.action(Action::Menu, ctx);
                 }
             });
-            if self.browser.configured_root.is_none() {
+            if phone_only {
                 ui.label("Waiting for media from your phone");
-                ui.label(format!(
-                    "Open http://THIS-COMPUTER-IP:{}/ on your phone",
-                    self.settings.config.listen.port()
-                ));
+                if let Some(address) = self.phone.address() {
+                    ui.add(egui::Label::new(format!("Open {address} on your phone")).wrap());
+                }
             }
             ui.add(egui::Label::new(self.browser.current.to_string_lossy()).wrap());
             ui.add_space(8.0);

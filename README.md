@@ -91,6 +91,10 @@ backend uses the separate mpv installation's own playback/controller bindings.
 
 ## Phone URL submission
 
+The video selector shows the phone QR and currently selected address: a large QR
+when no library is configured, or a compact sidebar when browsing local files.
+The address is shared with the menu's address selection.
+
 When no video is playing, open the menu (Start on a controller or M on a keyboard)
 and scan the QR code to open the web UI on your phone. Both devices should be on
 the same network. If multiple network addresses are available, select “Next phone

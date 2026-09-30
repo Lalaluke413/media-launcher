@@ -51,6 +51,7 @@ impl PhoneLink {
             return;
         };
         self.checked = Some(Instant::now());
+        let previous = self.address().map(str::to_owned);
         self.urls.clear();
         self.message.clear();
         match endpoint {
@@ -77,7 +78,12 @@ impl PhoneLink {
                 }
             }
         }
-        self.selected = self.selected.min(self.urls.len().saturating_sub(1));
+        self.selected = previous
+            .and_then(|url| self.urls.iter().position(|candidate| candidate == &url))
+            .unwrap_or_else(|| self.selected.min(self.urls.len().saturating_sub(1)));
+    }
+    pub fn address(&self) -> Option<&str> {
+        self.urls.get(self.selected).map(String::as_str)
     }
     pub fn multiple(&self) -> bool {
         self.urls.len() > 1
@@ -88,6 +94,9 @@ impl PhoneLink {
         }
     }
     pub fn show(&mut self, ui: &mut egui::Ui) {
+        self.show_sized(ui, 200.0);
+    }
+    pub fn show_sized(&mut self, ui: &mut egui::Ui, qr_size: f32) {
         ui.label(egui::RichText::new("Phone web UI").size(20.0).strong());
         let Some(url) = self.urls.get(self.selected) else {
             ui.label(&self.message);
@@ -121,7 +130,10 @@ impl PhoneLink {
         }
         let texture = &self.texture.as_ref().unwrap().1;
         let modules = texture.size()[0] as f32;
-        let size = modules * (200.0 / modules).floor();
+        let size = modules
+            * (qr_size.min(ui.available_width()) / modules)
+                .floor()
+                .max(1.0);
         ui.image((texture.id(), egui::vec2(size, size)));
         ui.hyperlink_to(egui::RichText::new(url).size(14.0), url);
         ui.label(
