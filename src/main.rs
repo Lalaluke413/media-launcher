@@ -343,6 +343,7 @@ impl App {
             && !status.loading
             && self.overlay_activity.elapsed() >= Duration::from_secs(3)
         {
+            ctx.set_cursor_icon(egui::CursorIcon::None);
             return;
         }
         egui::Area::new("player_controls".into()).order(egui::Order::Foreground)
