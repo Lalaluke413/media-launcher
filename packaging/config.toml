@@ -1,0 +1,25 @@
+# Media Launcher configuration. Restart the app after editing.
+# Paths in this file are relative to this file's directory, unless absolute.
+# Bare executable names are searched on PATH. Use literal strings for Windows:
+# root = 'C:\Users\You\Videos'
+# No root means URL-only mode; a local library is optional.
+# root = '/home/you/Videos'
+ui_scale = 1.0
+listen = '0.0.0.0:8765'
+
+[player]
+executable = 'mpv'
+fullscreen = true
+# Each entry is one mpv option; use --option=value for values.
+args = []
+
+[yt_dlp]
+# Omit executable to preserve mpv's normal yt-dlp discovery.
+# executable = 'yt-dlp'
+# Extra plugin search directories; the app's own directory is always included.
+plugin_dirs = []
+# Uses normal yt-dlp browser[:profile] syntax.
+# cookies_from_browser = 'firefox'
+# Each entry is one argument. Repeated options are supported.
+# args = ['--extractor-args', 'youtube:player_client=default']
+args = []

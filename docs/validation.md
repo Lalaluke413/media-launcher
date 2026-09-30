@@ -1,3 +1,47 @@
+# Configuration and customization validation — 2026-09-29
+
+Stage 2 adds persistent TOML configuration, standard per-user configuration/data
+locations, CLI overrides, an optional local library, and yt-dlp customization.
+No CI was added.
+
+## Passed
+
+- `cargo build --locked --offline`: Linux application built.
+- `cargo test --locked --offline`: **16 passed**, 0 failed; one dependency-based
+  integration test is ignored by default.
+- `cargo test --locked --offline mpv_loads_plugins -- --ignored --nocapture`:
+  **1 passed** using installed mpv 0.41.0 and yt-dlp on Linux. A temporary
+  localhost HTTP server supplies WAV audio. mpv invokes a custom yt-dlp
+  executable and plays media resolved by extractors in both the app's user
+  directory and an extra plugin directory. Executable/plugin paths include
+  commas, Unicode, and apostrophes. This test needs network socket permission
+  even though no external media service is contacted.
+- `cargo clippy --locked --offline --all-targets -- -D warnings`: clean.
+- `cargo check --locked --offline --target x86_64-pc-windows-gnu --all-targets`:
+  application and tests cross-compile for Windows; no Windows linking/runtime
+  validation is implied.
+- `cargo fmt --check` and `git diff --check`: clean.
+- CLI smoke checks: `--help` and `--show-paths` do not create configuration/data
+  directories; Linux XDG path overrides are respected; invalid configuration
+  exits with code 2 before GUI/server startup.
+
+Configuration tests cover first-run creation, preserving edits and extractor
+files, missing explicit configuration, unknown keys/malformed TOML, relative
+path bases, CLI precedence without writeback, repeatable plugin overrides,
+invalid settings, and repeated yt-dlp arguments with special characters. The
+browser also has a URL-only state test. The original Unix child-process test
+still checks literal media arguments, single-player enforcement, and exit status.
+
+## Still required
+
+- Native Windows build/runtime checks, browser-cookie extraction, and playback
+  using the eventual bundled yt-dlp distribution.
+- Interactive inspection of the URL-only waiting screen and real phone access.
+- Steam, physical-controller, Wayland/X11 window restoration, and couch/4K
+  checks listed in the Stage 1 record below.
+
+---
+
 # Portable foundation validation — 2026-09-29
 
 Stage 1 removes Nix packaging and machine-specific defaults. No CI was added.

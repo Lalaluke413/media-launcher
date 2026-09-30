@@ -1,0 +1,537 @@
+use directories::BaseDirs;
+use serde::Deserialize;
+use std::{
+    ffi::OsString,
+    fs::{self, OpenOptions},
+    io::Write,
+    net::SocketAddr,
+    path::{Path, PathBuf},
+};
+
+pub const TEMPLATE: &str = include_str!("../packaging/config.toml");
+const HELP: &str =
+    "media-launcher [--config PATH] [--data-dir PATH] [--root PATH] [--mpv EXECUTABLE]
+               [--yt-dlp EXECUTABLE] [--yt-dlp-plugin-dir PATH] [--ui-scale NUMBER]
+               [--listen IP:PORT] [--show-paths]
+Settings are read from the per-user config.toml; command-line values override them.
+No library root is required. Defaults: mpv on PATH, UI scale 1.0, 0.0.0.0:8765.
+UI scale must be between 0.5 and 4.0. Repeat --yt-dlp-plugin-dir for multiple paths.
+--show-paths prints customization locations without creating files.";
+
+#[derive(Debug, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Config {
+    pub root: Option<PathBuf>,
+    pub ui_scale: f32,
+    pub listen: SocketAddr,
+    pub player: PlayerConfig,
+    pub yt_dlp: ExtractorConfig,
+}
+impl Default for Config {
+    fn default() -> Self {
+        Self {
+            root: None,
+            ui_scale: 1.0,
+            listen: "0.0.0.0:8765".parse().unwrap(),
+            player: PlayerConfig::default(),
+            yt_dlp: ExtractorConfig::default(),
+        }
+    }
+}
+#[derive(Debug, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct PlayerConfig {
+    pub executable: PathBuf,
+    pub fullscreen: bool,
+    pub args: Vec<String>,
+}
+impl Default for PlayerConfig {
+    fn default() -> Self {
+        Self {
+            executable: "mpv".into(),
+            fullscreen: true,
+            args: vec![],
+        }
+    }
+}
+#[derive(Debug, Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct ExtractorConfig {
+    pub executable: Option<PathBuf>,
+    pub plugin_dirs: Vec<PathBuf>,
+    pub cookies_from_browser: Option<String>,
+    pub args: Vec<String>,
+}
+
+#[derive(Debug)]
+pub struct Settings {
+    pub config: Config,
+    pub config_path: PathBuf,
+    pub data_dir: PathBuf,
+}
+impl Settings {
+    pub fn plugin_dir(&self) -> PathBuf {
+        self.data_dir.join("yt-dlp/plugins")
+    }
+    pub fn prepare(&self) -> Result<(), String> {
+        // yt-dlp searches plugin-dir children for namespace packages.
+        let extractor = self.plugin_dir().join("user/yt_dlp_plugins/extractor");
+        fs::create_dir_all(&extractor)
+            .map_err(|e| format!("Cannot create {}: {e}", extractor.display()))?;
+        for path in &self.config.yt_dlp.plugin_dirs {
+            if !path.is_dir() {
+                return Err(format!(
+                    "yt-dlp plugin directory does not exist: {}",
+                    path.display()
+                ));
+            }
+        }
+        Ok(())
+    }
+    pub fn extractor_config(&self) -> Result<String, String> {
+        let mut args = vec!["--plugin-dirs".to_owned(), "default".to_owned()];
+        for path in std::iter::once(self.plugin_dir()).chain(self.config.yt_dlp.plugin_dirs.clone())
+        {
+            args.push("--plugin-dirs".into());
+            args.push(
+                path.to_str()
+                    .ok_or("yt-dlp plugin paths must be valid Unicode")?
+                    .into(),
+            );
+        }
+        if let Some(browser) = &self.config.yt_dlp.cookies_from_browser {
+            args.extend(["--cookies-from-browser".into(), browser.clone()]);
+        }
+        args.extend(self.config.yt_dlp.args.clone());
+        // yt-dlp config files use shlex, including on Windows. No shell is executed.
+        args.into_iter()
+            .map(|arg| {
+                if arg.contains(['\n', '\r', '\0']) {
+                    return Err("yt-dlp arguments cannot contain newlines or NUL characters".into());
+                }
+                Ok(format!("'{}'", arg.replace('\'', "'\"'\"'")))
+            })
+            .collect::<Result<Vec<_>, String>>()
+            .map(|args| format!("# coding: utf-8\n{}\n", args.join(" ")))
+    }
+}
+
+#[derive(Default)]
+struct Overrides {
+    config: Option<PathBuf>,
+    data_dir: Option<PathBuf>,
+    root: Option<PathBuf>,
+    mpv: Option<PathBuf>,
+    yt_dlp: Option<PathBuf>,
+    plugin_dirs: Vec<PathBuf>,
+    scale: Option<f32>,
+    listen: Option<SocketAddr>,
+    show_paths: bool,
+}
+impl Overrides {
+    fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Self, String> {
+        let mut result = Self::default();
+        let mut args = args.into_iter();
+        while let Some(arg) = args.next() {
+            if arg == "--show-paths" {
+                result.show_paths = true;
+                continue;
+            }
+            let value = match arg.to_str() {
+                Some(
+                    "--config"
+                    | "--data-dir"
+                    | "--root"
+                    | "--mpv"
+                    | "--yt-dlp"
+                    | "--yt-dlp-plugin-dir"
+                    | "--ui-scale"
+                    | "--listen",
+                ) => args
+                    .next()
+                    .ok_or_else(|| format!("{} requires a value", arg.to_string_lossy()))?,
+                _ => return Err(format!("Unknown option: {}", arg.to_string_lossy())),
+            };
+            match arg.to_str().unwrap() {
+                "--config" => result.config = Some(value.into()),
+                "--data-dir" => result.data_dir = Some(value.into()),
+                "--root" => result.root = Some(value.into()),
+                "--mpv" => result.mpv = Some(value.into()),
+                "--yt-dlp" => result.yt_dlp = Some(value.into()),
+                "--yt-dlp-plugin-dir" => result.plugin_dirs.push(value.into()),
+                "--ui-scale" => {
+                    result.scale = Some(
+                        value
+                            .to_str()
+                            .and_then(|s| s.parse().ok())
+                            .ok_or("--ui-scale requires a number")?,
+                    )
+                }
+                "--listen" => {
+                    result.listen = Some(
+                        value
+                            .to_str()
+                            .and_then(|s| s.parse().ok())
+                            .ok_or("--listen requires an IP:PORT address")?,
+                    )
+                }
+                _ => unreachable!(),
+            }
+        }
+        Ok(result)
+    }
+}
+
+pub fn load() -> Result<Option<Settings>, String> {
+    let args: Vec<_> = std::env::args_os().skip(1).collect();
+    if args.iter().any(|arg| arg == "--help" || arg == "-h") {
+        println!("{HELP}");
+        return Ok(None);
+    }
+    let overrides = Overrides::parse(args)?;
+    let cwd = std::env::current_dir().map_err(|e| format!("Cannot read current directory: {e}"))?;
+    let (default_config, default_data) = default_paths();
+    let config_path = overrides
+        .config
+        .as_ref()
+        .map(|p| absolute(p, &cwd))
+        .or(default_config)
+        .ok_or("Cannot locate user configuration directory; pass --config PATH")?;
+    let data_dir = overrides
+        .data_dir
+        .as_ref()
+        .map(|p| absolute(p, &cwd))
+        .or(default_data)
+        .ok_or("Cannot locate user data directory; pass --data-dir PATH")?;
+    if overrides.show_paths {
+        println!(
+            "Config: {}\nData: {}\nExtractors: {}",
+            config_path.display(),
+            data_dir.display(),
+            data_dir
+                .join("yt-dlp/plugins/user/yt_dlp_plugins/extractor")
+                .display()
+        );
+        return Ok(None);
+    }
+    let settings = read_settings(config_path, data_dir, overrides, &cwd)?;
+    settings.prepare()?;
+    eprintln!("Configuration: {}", settings.config_path.display());
+    Ok(Some(settings))
+}
+
+fn default_paths() -> (Option<PathBuf>, Option<PathBuf>) {
+    let Some(base) = BaseDirs::new() else {
+        return (None, None);
+    };
+    let name = if cfg!(windows) || cfg!(target_os = "macos") {
+        "MediaLauncher"
+    } else {
+        "media-launcher"
+    };
+    (
+        Some(base.config_dir().join(name).join("config.toml")),
+        Some(base.data_dir().join(name)),
+    )
+}
+fn absolute(path: &Path, base: &Path) -> PathBuf {
+    if path.is_absolute() {
+        path.to_owned()
+    } else {
+        base.join(path)
+    }
+}
+fn executable(path: &Path, base: &Path) -> PathBuf {
+    if path.as_os_str().is_empty() {
+        return path.to_owned();
+    }
+    if path.components().count() == 1
+        && matches!(
+            path.components().next(),
+            Some(std::path::Component::Normal(_))
+        )
+    {
+        path.to_owned()
+    } else {
+        absolute(path, base)
+    }
+}
+fn read_settings(
+    config_path: PathBuf,
+    data_dir: PathBuf,
+    overrides: Overrides,
+    cwd: &Path,
+) -> Result<Settings, String> {
+    let text = match fs::read_to_string(&config_path) {
+        Ok(text) => text,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound && overrides.config.is_none() => {
+            let parent = config_path.parent().ok_or("Config path has no parent")?;
+            fs::create_dir_all(parent)
+                .map_err(|e| format!("Cannot create {}: {e}", parent.display()))?;
+            let mut options = OpenOptions::new();
+            options.write(true).create_new(true);
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::OpenOptionsExt;
+                options.mode(0o600);
+            }
+            match options.open(&config_path) {
+                Ok(mut file) => {
+                    file.write_all(TEMPLATE.as_bytes())
+                        .map_err(|e| format!("Cannot write {}: {e}", config_path.display()))?;
+                    TEMPLATE.into()
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                    fs::read_to_string(&config_path)
+                        .map_err(|e| format!("Cannot read {}: {e}", config_path.display()))?
+                }
+                Err(e) => return Err(format!("Cannot create {}: {e}", config_path.display())),
+            }
+        }
+        Err(e) => return Err(format!("Cannot read {}: {e}", config_path.display())),
+    };
+    let mut config: Config = toml::from_str(&text)
+        .map_err(|e| format!("Invalid configuration {}: {e}", config_path.display()))?;
+    let base = config_path.parent().ok_or("Config path has no parent")?;
+    if config
+        .root
+        .as_ref()
+        .is_some_and(|p| p.as_os_str().is_empty())
+        || overrides
+            .root
+            .as_ref()
+            .is_some_and(|p| p.as_os_str().is_empty())
+        || config
+            .yt_dlp
+            .plugin_dirs
+            .iter()
+            .chain(&overrides.plugin_dirs)
+            .any(|p| p.as_os_str().is_empty())
+    {
+        return Err("Root and plugin directories must not be empty".into());
+    }
+    config.root = overrides
+        .root
+        .map(|p| absolute(&p, cwd))
+        .or_else(|| config.root.map(|p| absolute(&p, base)));
+    config.player.executable = overrides
+        .mpv
+        .map(|p| executable(&p, cwd))
+        .unwrap_or_else(|| executable(&config.player.executable, base));
+    config.yt_dlp.executable = overrides
+        .yt_dlp
+        .map(|p| executable(&p, cwd))
+        .or_else(|| config.yt_dlp.executable.map(|p| executable(&p, base)));
+    config.yt_dlp.plugin_dirs = if overrides.plugin_dirs.is_empty() {
+        config
+            .yt_dlp
+            .plugin_dirs
+            .into_iter()
+            .map(|p| absolute(&p, base))
+            .collect()
+    } else {
+        overrides
+            .plugin_dirs
+            .into_iter()
+            .map(|p| absolute(&p, cwd))
+            .collect()
+    };
+    if let Some(scale) = overrides.scale {
+        config.ui_scale = scale;
+    }
+    if let Some(listen) = overrides.listen {
+        config.listen = listen;
+    }
+    if !config.ui_scale.is_finite() || !(0.5..=4.0).contains(&config.ui_scale) {
+        return Err("UI scale must be between 0.5 and 4.0".into());
+    }
+    if config
+        .root
+        .as_ref()
+        .is_some_and(|p| p.as_os_str().is_empty())
+        || config.player.executable.as_os_str().is_empty()
+    {
+        return Err("Root and player executable must not be empty".into());
+    }
+    for arg in &config.player.args {
+        if !arg.starts_with("--") || arg == "--" || arg.contains('\0') {
+            return Err("player.args must contain mpv options such as --hwdec=auto; media paths are supplied by the launcher".into());
+        }
+    }
+    if let Some(path) = &config.yt_dlp.executable {
+        let text = path
+            .to_str()
+            .ok_or("yt-dlp executable must be valid Unicode")?;
+        let separator = if cfg!(windows) { ';' } else { ':' };
+        if text.is_empty() || text.contains([separator, '\n', '\r', '\0']) {
+            return Err(format!(
+                "yt-dlp executable must be a single nonempty path without {separator}"
+            ));
+        }
+    }
+    let settings = Settings {
+        config,
+        config_path,
+        data_dir,
+    };
+    settings.extractor_config()?;
+    Ok(settings)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn read(dir: &Path, text: &str, args: &[&str]) -> Result<Settings, String> {
+        let path = dir.join("config.toml");
+        fs::write(&path, text).unwrap();
+        let overrides = Overrides::parse(args.iter().map(OsString::from))?;
+        read_settings(path, dir.join("data"), overrides, &dir.join("cwd"))
+    }
+    #[test]
+    fn first_run_creates_defaults_once_and_preserves_edits() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings/config.toml");
+        let settings = read_settings(
+            path.clone(),
+            dir.path().join("data"),
+            Overrides::default(),
+            dir.path(),
+        )
+        .unwrap();
+        assert!(settings.config.root.is_none());
+        settings.prepare().unwrap();
+        assert!(
+            settings
+                .plugin_dir()
+                .join("user/yt_dlp_plugins/extractor")
+                .is_dir()
+        );
+        let plugin = settings
+            .plugin_dir()
+            .join("user/yt_dlp_plugins/extractor/mine.py");
+        fs::write(&plugin, "# user customization").unwrap();
+        settings.prepare().unwrap();
+        assert_eq!(fs::read_to_string(plugin).unwrap(), "# user customization");
+        fs::write(&path, "ui_scale = 1.5").unwrap();
+        let settings = read_settings(
+            path.clone(),
+            dir.path().join("data"),
+            Overrides::default(),
+            dir.path(),
+        )
+        .unwrap();
+        assert_eq!(settings.config.ui_scale, 1.5);
+        assert_eq!(fs::read_to_string(path).unwrap(), "ui_scale = 1.5");
+    }
+    #[test]
+    fn explicit_missing_config_and_unknown_keys_report_errors() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("missing.toml");
+        assert!(
+            read_settings(
+                path.clone(),
+                dir.path().join("data"),
+                Overrides {
+                    config: Some(path.clone()),
+                    ..Default::default()
+                },
+                dir.path()
+            )
+            .is_err()
+        );
+        assert!(!path.exists());
+        assert!(
+            read(dir.path(), "ui_sacle = 2.0", &[])
+                .unwrap_err()
+                .contains("ui_sacle")
+        );
+        assert!(read(dir.path(), "[player]\nexecutabel = 'mpv'", &[]).is_err());
+        assert!(read(dir.path(), "root = [", &[]).is_err());
+    }
+    #[test]
+    fn cli_overrides_and_relative_paths_have_predictable_bases() {
+        let dir = tempfile::tempdir().unwrap();
+        let text = "root = 'videos'\nui_scale = 2.0\nlisten = '127.0.0.1:9000'\n[player]\nexecutable = './bin/mpv'\n[yt_dlp]\nexecutable = 'yt-dlp'\nplugin_dirs = ['plugins']";
+        let settings = read(dir.path(), text, &[]).unwrap();
+        assert_eq!(settings.config.root, Some(dir.path().join("videos")));
+        assert_eq!(
+            settings.config.player.executable,
+            dir.path().join("./bin/mpv")
+        );
+        assert_eq!(settings.config.yt_dlp.executable, Some("yt-dlp".into()));
+        assert_eq!(
+            settings.config.yt_dlp.plugin_dirs,
+            vec![dir.path().join("plugins")]
+        );
+        let settings = read(
+            dir.path(),
+            text,
+            &[
+                "--root",
+                "other",
+                "--mpv",
+                "mpv-custom",
+                "--yt-dlp",
+                "./yt-dlp",
+                "--ui-scale",
+                "1.25",
+                "--listen",
+                "0.0.0.0:1234",
+                "--yt-dlp-plugin-dir",
+                "one",
+                "--yt-dlp-plugin-dir",
+                "two",
+            ],
+        )
+        .unwrap();
+        assert_eq!(settings.config.root, Some(dir.path().join("cwd/other")));
+        assert_eq!(
+            settings.config.player.executable,
+            PathBuf::from("mpv-custom")
+        );
+        assert_eq!(
+            settings.config.yt_dlp.executable,
+            Some(dir.path().join("cwd/./yt-dlp"))
+        );
+        assert_eq!(settings.config.ui_scale, 1.25);
+        assert_eq!(settings.config.listen.port(), 1234);
+        assert_eq!(
+            settings.config.yt_dlp.plugin_dirs,
+            vec![dir.path().join("cwd/one"), dir.path().join("cwd/two")]
+        );
+        assert_eq!(
+            fs::read_to_string(dir.path().join("config.toml")).unwrap(),
+            text
+        );
+    }
+    #[test]
+    fn invalid_settings_fail_before_playback() {
+        let dir = tempfile::tempdir().unwrap();
+        for text in [
+            "ui_scale = nan",
+            "ui_scale = 4.1",
+            "root = ''",
+            "listen = 'bad'",
+            "[player]\nexecutable = ''",
+            "[player]\nargs = ['--', 'movie.mp4']",
+            "[yt_dlp]\nexecutable = ''",
+            "[yt_dlp]\nargs = ['a\nb']",
+        ] {
+            assert!(read(dir.path(), text, &[]).is_err(), "accepted {text}");
+        }
+        assert!(read(dir.path(), "", &["--ui-scale", "NaN"]).is_err());
+        let settings = read(dir.path(), "[yt_dlp]\nplugin_dirs = ['missing']", &[]).unwrap();
+        assert!(settings.prepare().unwrap_err().contains("missing"));
+    }
+    #[test]
+    fn extractor_configuration_supports_repeated_options_and_special_characters() {
+        let dir = tempfile::tempdir().unwrap();
+        let settings = read(dir.path(), "[yt_dlp]\nplugin_dirs = [\"plugins,雪's\"]\ncookies_from_browser = 'firefox:My Profile'\nargs = ['--config-locations', 'one.conf', '--config-locations', 'two.conf']", &[]).unwrap();
+        let config = settings.extractor_config().unwrap();
+        assert_eq!(config.matches("'--plugin-dirs'").count(), 3);
+        assert!(config.contains("雪'\"'\"'s"));
+        assert!(config.contains("'--cookies-from-browser' 'firefox:My Profile'"));
+        assert_eq!(config.matches("'--config-locations'").count(), 2);
+    }
+}

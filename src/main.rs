@@ -1,4 +1,5 @@
 mod browser;
+mod config;
 mod input;
 mod player;
 mod web;
@@ -6,69 +7,12 @@ mod web;
 use eframe::egui;
 use input::{Action, Controls, Input};
 use std::{
-    ffi::OsString,
-    net::SocketAddr,
-    path::PathBuf,
     sync::{
         Arc, Mutex,
         atomic::{AtomicBool, Ordering},
     },
     time::{Duration, Instant},
 };
-
-struct Options {
-    root: PathBuf,
-    mpv: OsString,
-    scale: f32,
-    listen: SocketAddr,
-}
-impl Options {
-    fn parse() -> Result<Option<Self>, String> {
-        let mut options = Self {
-            root: ".".into(),
-            mpv: "mpv".into(),
-            scale: 1.0,
-            listen: "0.0.0.0:8765".parse().unwrap(),
-        };
-        let mut args = std::env::args_os().skip(1);
-        while let Some(arg) = args.next() {
-            if arg == "--help" || arg == "-h" {
-                println!(
-                    "media-launcher [--root PATH] [--mpv EXECUTABLE] [--ui-scale NUMBER] [--listen ADDRESS]\nDefaults: current directory, mpv on PATH, 1.0, 0.0.0.0:8765\nUI scale must be between 0.5 and 4.0."
-                );
-                return Ok(None);
-            }
-            match arg.to_str() {
-                Some("--root") => {
-                    options.root = args.next().ok_or("--root requires a path")?.into()
-                }
-                Some("--mpv") => options.mpv = args.next().ok_or("--mpv requires an executable")?,
-                Some("--ui-scale") => {
-                    options.scale = args
-                        .next()
-                        .and_then(|v| v.to_str().and_then(|s| s.parse::<f32>().ok()))
-                        .ok_or("--ui-scale requires a number")?;
-                    if !options.scale.is_finite() || !(0.5..=4.0).contains(&options.scale) {
-                        return Err("--ui-scale must be between 0.5 and 4.0".into());
-                    }
-                }
-                Some("--listen") => {
-                    options.listen = args
-                        .next()
-                        .and_then(|v| v.to_str().and_then(|s| s.parse().ok()))
-                        .ok_or("--listen requires an IP:PORT address")?;
-                }
-                _ => return Err(format!("Unknown option: {}", arg.to_string_lossy())),
-            }
-        }
-        if !options.root.is_absolute() {
-            options.root = std::env::current_dir()
-                .map_err(|e| e.to_string())?
-                .join(options.root);
-        }
-        Ok(Some(options))
-    }
-}
 
 #[derive(Default)]
 struct PadState {
@@ -131,7 +75,7 @@ impl Drop for Gamepads {
 
 struct App {
     browser: browser::Browser,
-    mpv: OsString,
+    settings: config::Settings,
     player: player::Player,
     input: Input,
     pads: Gamepads,
@@ -139,8 +83,8 @@ struct App {
     web: web::Server,
 }
 impl App {
-    fn new(cc: &eframe::CreationContext<'_>, options: Options) -> Self {
-        cc.egui_ctx.set_zoom_factor(options.scale);
+    fn new(cc: &eframe::CreationContext<'_>, settings: config::Settings) -> Self {
+        cc.egui_ctx.set_zoom_factor(settings.config.ui_scale);
         cc.egui_ctx.set_visuals(egui::Visuals::dark());
         let mut style = (*cc.egui_ctx.style()).clone();
         style
@@ -155,13 +99,13 @@ impl App {
         style.spacing.item_spacing = egui::vec2(12.0, 12.0);
         cc.egui_ctx.set_style(style);
         Self {
-            browser: browser::Browser::new(options.root),
-            mpv: options.mpv,
+            browser: browser::Browser::new(settings.config.root.clone()),
             player: player::Player::default(),
             input: Input::new(Instant::now()),
             pads: Gamepads::new(cc.egui_ctx.clone()),
             ensure_visible: true,
-            web: web::Server::new(options.listen, cc.egui_ctx.clone()),
+            web: web::Server::new(settings.config.listen, cc.egui_ctx.clone()),
+            settings,
         }
     }
     fn action(&mut self, action: Action, ctx: &egui::Context) {
@@ -205,7 +149,7 @@ impl App {
                     let result = self
                         .browser
                         .media_path(&entry)
-                        .and_then(|path| self.player.launch(&self.mpv, path.as_os_str()));
+                        .and_then(|path| self.player.launch(&self.settings, path.as_os_str()));
                     match result {
                         Ok(()) => self.input.block(),
                         Err(e) => {
@@ -225,7 +169,7 @@ impl eframe::App for App {
                 Err("Playback is already active".into())
             } else {
                 self.player
-                    .launch(&self.mpv, std::ffi::OsStr::new(request.url.as_ref()))
+                    .launch(&self.settings, std::ffi::OsStr::new(request.url.as_ref()))
             };
             if result.is_ok() {
                 self.input.block();
@@ -286,7 +230,14 @@ impl eframe::App for App {
         }
         egui::TopBottomPanel::top("path").show(ctx, |ui| {
             ui.add_space(12.0);
-            ui.heading("Videos");
+            ui.heading("Media Launcher");
+            if self.browser.configured_root.is_none() {
+                ui.label("Waiting for media from your phone");
+                ui.label(format!(
+                    "Open http://THIS-COMPUTER-IP:{}/ on your phone",
+                    self.settings.config.listen.port()
+                ));
+            }
             ui.add(egui::Label::new(self.browser.current.to_string_lossy()).wrap());
             ui.add_space(8.0);
         });
@@ -312,7 +263,12 @@ impl eframe::App for App {
                 ui.label("A / Enter or X / R to retry · B / Esc to dismiss · Start / Q to quit");
             }
             if self.browser.entries.is_empty() {
-                ui.label("No visible folders or supported videos in this directory.");
+                if self.browser.configured_root.is_none() {
+                    ui.label("To browse local videos, set root in config.toml or launch with --root PATH.");
+                    ui.label(format!("Configuration: {}", self.settings.config_path.display()));
+                } else {
+                    ui.label("No visible folders or supported videos in this directory.");
+                }
             }
             let mut clicked = None;
             let output = egui::ScrollArea::vertical()
@@ -367,8 +323,8 @@ impl eframe::App for App {
 }
 
 fn main() -> eframe::Result {
-    let options = match Options::parse() {
-        Ok(Some(options)) => options,
+    let settings = match config::load() {
+        Ok(Some(settings)) => settings,
         Ok(None) => return Ok(()),
         Err(e) => {
             eprintln!("{e}\nUse --help for usage.");
@@ -379,11 +335,11 @@ fn main() -> eframe::Result {
         "media-launcher",
         eframe::NativeOptions {
             viewport: egui::ViewportBuilder::default()
-                .with_title("Videos")
+                .with_title("Media Launcher")
                 .with_fullscreen(true)
                 .with_app_id("media-launcher"),
             ..Default::default()
         },
-        Box::new(move |cc| Ok(Box::new(App::new(cc, options)))),
+        Box::new(move |cc| Ok(Box::new(App::new(cc, settings)))),
     )
 }

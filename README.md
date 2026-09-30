@@ -13,9 +13,10 @@ workload and Windows SDK. On Linux, install pkg-config and libudev development
 files, plus your desktop's Wayland/X11, libxkbcommon, and OpenGL/EGL libraries.
 The application supports both Wayland and X11. Cargo.lock pins Rust dependencies.
 
-Install mpv separately for now. For web URLs, configure mpv with yt-dlp and any
-custom extractor plugins you use. Existing mpv configuration and resume behavior
-remain in charge.
+Install mpv and yt-dlp separately for now. Persistent player and extractor
+settings, browser cookies, and plugin directories are described in
+[configuration and customization](docs/configuration.md). Existing mpv
+configuration and resume behavior remain in charge.
 
 ```sh
 cargo build --locked --release
@@ -41,8 +42,11 @@ Windows PowerShell example (using explicit paths):
 .\target\release\media-launcher.exe --root "$env:USERPROFILE\Videos" --mpv "C:\Tools\mpv\mpv.exe" --ui-scale 1.5
 ```
 
-Defaults: library root is the **current working directory**, player is `mpv`
-found on PATH, UI scale is `1.0`, and the web server listens on `0.0.0.0:8765`.
+On first launch, a default per-user `config.toml` and extractor directory are
+created. Without a configured library root, the app waits for phone-submitted
+URLs. Player defaults to `mpv` found on PATH, UI scale to `1.0`, and web listening
+to `0.0.0.0:8765`. Configuration persists between launches; CLI overrides apply
+for one launch. Run `media-launcher --show-paths` to locate customization files.
 Relative roots are accepted. `--mpv` accepts an executable path or a command on
 PATH. `--ui-scale` accepts `0.5`–`4.0` and multiplies desktop display scaling.
 Run `media-launcher --help` for syntax.

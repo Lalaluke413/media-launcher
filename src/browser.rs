@@ -85,7 +85,7 @@ pub struct View {
 }
 
 pub struct Browser {
-    pub configured_root: PathBuf,
+    pub configured_root: Option<PathBuf>,
     pub root: Option<PathBuf>,
     pub current: PathBuf,
     pub entries: Vec<Entry>,
@@ -95,9 +95,9 @@ pub struct Browser {
 }
 
 impl Browser {
-    pub fn new(root: PathBuf) -> Self {
+    pub fn new(root: Option<PathBuf>) -> Self {
         let mut browser = Self {
-            current: root.clone(),
+            current: root.clone().unwrap_or_default(),
             configured_root: root,
             root: None,
             entries: vec![],
@@ -109,8 +109,11 @@ impl Browser {
         browser
     }
     pub fn refresh(&mut self) {
+        let Some(configured_root) = &self.configured_root else {
+            return;
+        };
         if self.root.is_none() {
-            match self.configured_root.canonicalize() {
+            match configured_root.canonicalize() {
                 Ok(root) if root.is_dir() => {
                     self.current = root.clone();
                     self.root = Some(root);
@@ -194,6 +197,15 @@ mod tests {
     #[cfg(unix)]
     use std::os::unix::{ffi::OsStringExt, fs::symlink};
     #[test]
+    fn url_only_mode_does_not_browse_the_working_directory() {
+        let mut browser = Browser::new(None);
+        browser.refresh();
+        browser.back();
+        assert!(browser.root.is_none());
+        assert!(browser.entries.is_empty());
+        assert!(browser.error.is_none());
+    }
+    #[test]
     fn discovery_is_literal_sorted_and_confined() {
         let temp = tempfile::tempdir().unwrap();
         let root = temp.path().canonicalize().unwrap();
@@ -240,7 +252,7 @@ mod tests {
         for ext in ["mp4", "MKV", "m4v", "WEBM", "avi", "MOV", "ts", "M2TS"] {
             fs::write(temp.path().join(format!("video.{ext}")), b"").unwrap();
         }
-        let mut browser = Browser::new(temp.path().to_owned());
+        let mut browser = Browser::new(Some(temp.path().to_owned()));
         assert_eq!(browser.entries.len(), 8);
         browser.select(usize::MAX);
         assert_eq!(browser.view.selected, 7);
@@ -250,7 +262,7 @@ mod tests {
     fn unreadable_directory_is_recoverable() {
         use std::os::unix::fs::PermissionsExt;
         let temp = tempfile::tempdir().unwrap();
-        let mut browser = Browser::new(temp.path().to_owned());
+        let mut browser = Browser::new(Some(temp.path().to_owned()));
         let denied = temp.path().join("denied");
         fs::create_dir(&denied).unwrap();
         fs::set_permissions(&denied, fs::Permissions::from_mode(0o000)).unwrap();
@@ -273,7 +285,7 @@ mod tests {
         fs::write(outside.path().join("outside.mp4"), b"").unwrap();
         let link = root.path().join("alias.mp4");
         symlink(root.path().join("inside.mp4"), &link).unwrap();
-        let browser = Browser::new(root.path().to_owned());
+        let browser = Browser::new(Some(root.path().to_owned()));
         let entry = browser.entries.iter().find(|e| e.path == link).unwrap();
         fs::remove_file(&link).unwrap();
         symlink(outside.path().join("outside.mp4"), &link).unwrap();
@@ -286,7 +298,7 @@ mod tests {
         for name in ["a.mp4", "b.mp4", "c.mp4"] {
             fs::write(temp.path().join(name), b"").unwrap();
         }
-        let mut b = Browser::new(temp.path().to_owned());
+        let mut b = Browser::new(Some(temp.path().to_owned()));
         b.select(2);
         b.view.scroll = 120.0;
         let root = b.current.clone();
@@ -307,7 +319,7 @@ mod tests {
     fn unavailable_root_can_be_retried_and_removed_media_rejected() {
         let temp = tempfile::tempdir().unwrap();
         let root = temp.path().join("later");
-        let mut b = Browser::new(root.clone());
+        let mut b = Browser::new(Some(root.clone()));
         assert!(b.error.is_some());
         fs::create_dir(&root).unwrap();
         fs::write(root.join("a.mp4"), b"").unwrap();
