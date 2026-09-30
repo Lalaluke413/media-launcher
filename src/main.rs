@@ -1,6 +1,7 @@
 mod browser;
 mod input;
 mod menu;
+mod phone;
 mod web;
 
 use eframe::egui;
@@ -103,6 +104,7 @@ struct App {
     pads: Gamepads,
     ensure_visible: bool,
     web: web::Server,
+    phone: phone::PhoneLink,
     panel: Option<menu::Panel>,
     menu_selected: usize,
     preferences: Option<menu::Preferences>,
@@ -143,6 +145,7 @@ impl App {
             preferences: None,
             rebind_armed: false,
             menu_error: None,
+            phone: phone::PhoneLink::default(),
         };
         app.apply_audio();
         app

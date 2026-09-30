@@ -82,7 +82,7 @@ impl App {
                 if self.player.active() {
                     4
                 } else {
-                    3
+                    3 + usize::from(self.phone.multiple())
                 }
             }
             Some(Panel::Settings) => 7,
@@ -117,6 +117,10 @@ impl App {
         }
     }
     fn adjust(&mut self, direction: i32, ctx: &egui::Context) {
+        if self.panel == Some(Panel::Menu) && !self.player.active() && self.menu_selected == 3 {
+            self.phone.cycle();
+            return;
+        }
         if self.panel != Some(Panel::Settings) {
             return;
         }
@@ -163,6 +167,7 @@ impl App {
                     self.cancel_preferences(ctx);
                     self.action(Action::Stop, ctx);
                 }
+                3 if !self.player.active() => self.phone.cycle(),
                 _ => self.action(Action::Quit, ctx),
             },
             Some(Panel::Settings) => match self.menu_selected {
@@ -241,13 +246,17 @@ impl App {
         let Some(panel) = self.panel else {
             return;
         };
+        let show_phone = panel == Panel::Menu && !self.player.active();
+        if show_phone {
+            self.phone.refresh(self.web.endpoint());
+        }
         let title = match panel {
             Panel::Menu => "Menu",
             Panel::Settings => "Settings",
             Panel::Bindings => "Controller buttons",
             Panel::Rebind(_) => "Assign button",
         };
-        let rows: Vec<String> = match panel {
+        let mut rows: Vec<String> = match panel {
             Panel::Menu => if self.player.active() {
                 vec!["Resume", "Settings", "Stop playback", "Exit application"]
             } else {
@@ -279,12 +288,15 @@ impl App {
             }
             Panel::Rebind(_) => vec![],
         };
+        if show_phone && self.phone.multiple() {
+            rows.push("Next phone address".into());
+        }
         if !matches!(panel, Panel::Rebind(_)) {
             self.menu_selected = self.menu_selected.min(rows.len().saturating_sub(1));
         }
         let mut clicked = None;
         egui::Window::new(title).collapsible(false).resizable(false)
-            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0]).default_width(480.0)
+            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0]).default_width(if show_phone { 720.0 } else { 480.0 })
             .show(ctx, |ui| {
                 if let Panel::Rebind(index) = panel {
                     ui.label(format!("Release buttons, then press a button for {}.", BINDINGS[index]));
@@ -292,11 +304,18 @@ impl App {
                     if ui.button("Cancel").clicked_by(egui::PointerButton::Primary) { clicked = Some(usize::MAX); }
                 } else {
                     egui::ScrollArea::vertical().max_height(ctx.content_rect().height() * 0.65).show(ui, |ui| {
+                        ui.horizontal_top(|ui| {
+                        let row_width = if show_phone { (ui.available_width() - 240.0).max(160.0) } else { ui.available_width() };
+                        ui.vertical(|ui| {
+                        ui.set_width(row_width);
                         for (index, label) in rows.iter().enumerate() {
                             let response = ui.add_sized([ui.available_width(), 48.0], egui::Button::new(label).selected(index == self.menu_selected));
                             if index == self.menu_selected { response.scroll_to_me(None); }
                             if response.clicked_by(egui::PointerButton::Primary) { clicked = Some(index); }
                         }
+                        });
+                        if show_phone { ui.vertical(|ui| { ui.set_width(224.0); self.phone.show(ui); }); }
+                        });
                     });
                     ui.label("D-pad Up/Down: Navigate · D-pad Left/Right: Adjust");
                     let controls = self.preferences.as_ref().map_or(&self.settings.config.controls, |p| &p.controls);

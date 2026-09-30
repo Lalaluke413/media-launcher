@@ -91,6 +91,11 @@ backend uses the separate mpv installation's own playback/controller bindings.
 
 ## Phone URL submission
 
+When no video is playing, open the menu (Start on a controller or M on a keyboard)
+and scan the QR code to open the web UI on your phone. Both devices should be on
+the same network. If multiple network addresses are available, select “Next phone
+address” to try another.
+
 While the launcher is running, open `http://COMPUTER-LAN-IP:8765/` on a phone
 on the same network and submit an HTTP or HTTPS media URL. Allow the application
 through your firewall on the local network if needed. Only one playback can run

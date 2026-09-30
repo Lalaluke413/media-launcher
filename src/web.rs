@@ -53,14 +53,24 @@ impl Status {
 pub struct Server {
     requests: Receiver<Request>,
     status: Arc<Mutex<Status>>,
+    endpoint: Arc<Mutex<Option<Result<SocketAddr, String>>>>,
 }
 impl Server {
     pub fn new(address: SocketAddr, ctx: egui::Context) -> Self {
         let (send, requests) = mpsc::channel();
         let status = Arc::new(Mutex::new(Status::default()));
         let shared = status.clone();
-        std::thread::spawn(move || serve(address, send, ctx, shared));
-        Self { requests, status }
+        let endpoint = Arc::new(Mutex::new(None));
+        let bound = endpoint.clone();
+        std::thread::spawn(move || serve(address, send, ctx, shared, bound));
+        Self {
+            requests,
+            status,
+            endpoint,
+        }
+    }
+    pub fn endpoint(&self) -> Option<Result<SocketAddr, String>> {
+        self.endpoint.lock().unwrap().clone()
     }
     pub fn try_recv(&self) -> Option<Request> {
         self.requests.try_recv().ok()
@@ -74,14 +84,19 @@ fn serve(
     requests: Sender<Request>,
     ctx: egui::Context,
     status: Arc<Mutex<Status>>,
+    endpoint: Arc<Mutex<Option<Result<SocketAddr, String>>>>,
 ) {
     let listener = match TcpListener::bind(address) {
         Ok(listener) => listener,
         Err(e) => {
+            *endpoint.lock().unwrap() = Some(Err(e.to_string()));
+            ctx.request_repaint();
             eprintln!("Could not start web server on {address}: {e}");
             return;
         }
     };
+    *endpoint.lock().unwrap() = Some(listener.local_addr().map_err(|e| e.to_string()));
+    ctx.request_repaint();
     eprintln!("Web player listening on http://{address}");
     for stream in listener.incoming() {
         match stream {
