@@ -423,6 +423,35 @@ fn read_settings(
         .yt_dlp
         .map(|p| executable(&p, cwd))
         .or_else(|| config.yt_dlp.executable.map(|p| executable(&p, base)));
+    // Windows distributions carry their extractor beside the application.
+    // Explicit configuration always wins; Linux packages use system discovery.
+    #[cfg(windows)]
+    if config.yt_dlp.executable.is_none()
+        && let Some(directory) = std::env::current_exe()
+            .ok()
+            .and_then(|path| path.parent().map(Path::to_owned))
+    {
+        let extractor = directory.join("yt-dlp.exe");
+        if extractor.is_file() {
+            config.yt_dlp.executable = Some(extractor);
+            let deno = directory.join("deno.exe");
+            if deno.is_file()
+                && !config
+                    .yt_dlp
+                    .args
+                    .iter()
+                    .any(|arg| arg == "--js-runtimes" || arg.starts_with("--js-runtimes="))
+            {
+                let path = deno
+                    .to_str()
+                    .ok_or("Bundled Deno path must be valid Unicode")?;
+                config
+                    .yt_dlp
+                    .args
+                    .extend(["--js-runtimes".into(), format!("deno:{path}")]);
+            }
+        }
+    }
     config.yt_dlp.plugin_dirs = if overrides.plugin_dirs.is_empty() {
         config
             .yt_dlp

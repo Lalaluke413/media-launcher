@@ -25,7 +25,7 @@ fullscreen = true
 args = []
 
 [yt_dlp]
-# Omit executable to preserve mpv's normal yt-dlp discovery.
+# Omit executable to use bundled yt-dlp on Windows, or mpv's system discovery.
 # executable = 'yt-dlp'
 # Extra plugin search directories; the app's own directory is always included.
 plugin_dirs = []

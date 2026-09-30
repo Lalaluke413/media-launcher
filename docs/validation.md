@@ -1,3 +1,35 @@
+# Packaging first attempt — 2026-09-29
+
+Windows packaging adds a PowerShell bundle builder, pinned SHA-256-verified
+libmpv/yt-dlp/Deno/Vulkan-loader downloads, and an Inno Setup per-user installer.
+The Arch VCS PKGBUILD declares system dependencies. No CI or updater was added.
+
+## Lightweight checks passed
+
+- Existing `cargo test --locked --offline`: 18 passed, two native tests ignored.
+- Linux and Windows-target Clippy with warnings denied: clean.
+- Windows GNU `cargo check --locked --offline --all-targets`: clean.
+- Formatting and `git diff --check`: clean.
+- `bash -n packaging/arch/PKGBUILD` and `makepkg --printsrcinfo`: passed.
+- Downloaded libmpv and matching runtime archive hashes matched upstream GitHub
+  release digests. DLL imports were inspected: this libmpv hard-imports
+  `vulkan-1.dll`, which is not in either mpv archive. The script therefore bundles
+  the x64 loader from the official LunarG components ZIP; its downloaded hash
+  matched the pinned value and its x64 DLL/license paths were inspected.
+
+## Ready for user testing
+
+PowerShell and Inno Setup are not available here. The Windows bundle script,
+MSVC release build, installer, native playback, and reinstall/upgrade behavior
+have not been executed. Start with packaging/windows/README.md.
+
+The Arch package definition has not been built, installed, or submitted to AUR.
+It tracks committed upstream Git source; instructions explain how to test a
+local source repository instead. Complete third-party notices/source materials
+before publishing Windows binary releases (see THIRD-PARTY.md).
+
+---
+
 # Embedded playback validation — 2026-09-29
 
 Stage 3 defaults to libmpv playback inside the existing egui/OpenGL window,

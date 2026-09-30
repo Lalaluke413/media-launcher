@@ -3,7 +3,9 @@
 A controller-operated media application for local videos and phone-submitted
 URLs, designed for Steam couch setups on Windows and Linux. Video plays inside
 the application through libmpv. A separate-window mpv backend remains available.
-Bundled dependencies and installers are still planned.
+Initial Windows bundling/installer and Arch packaging definitions are available
+in [packaging/windows](packaging/windows/README.md) and
+[packaging/arch](packaging/arch/README.md). Windows packaging awaits native testing.
 
 ## Build and run
 
@@ -13,7 +15,9 @@ workload and Windows SDK. On Linux, install pkg-config and libudev development
 files, plus your desktop's Wayland/X11, libxkbcommon, and OpenGL/EGL libraries.
 The application supports both Wayland and X11. Cargo.lock pins Rust dependencies.
 
-Install **libmpv (client API 2)** and **yt-dlp** separately for now. Linux builds
+For a plain Cargo build, install **libmpv (client API 2)** and **yt-dlp** separately.
+The Windows bundle script includes them and Deno; the Arch package declares
+system dependencies. Linux builds
 look for `libmpv.so.2` or `libmpv.so` beside the executable and then in the system
 library search path. On Windows, place `mpv-2.dll` or `libmpv-2.dll` and its native
 dependencies beside `media-launcher.exe`, matching its architecture. An explicit

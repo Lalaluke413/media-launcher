@@ -1,0 +1,42 @@
+# First source package; local build instructions are in README.md.
+# This tracks Git until a versioned source release is published.
+pkgname=media-launcher-git
+pkgver=0.1.0
+pkgrel=1
+pkgdesc='Controller-operated mpv frontend for local videos and phone-submitted URLs'
+arch=('x86_64')
+url='https://github.com/Lalaluke413/media-launcher'
+license=('MIT')
+depends=('glibc' 'gcc-libs' 'systemd-libs' 'libx11' 'libxcursor' 'libxi'
+         'libxrandr' 'libxkbcommon' 'wayland' 'libglvnd' 'mpv' 'yt-dlp' 'deno')
+makedepends=('cargo' 'git' 'pkgconf')
+provides=('media-launcher')
+conflicts=('media-launcher')
+source=('media-launcher::git+https://github.com/Lalaluke413/media-launcher.git')
+sha256sums=('SKIP')
+
+pkgver() {
+  cd "$srcdir/media-launcher"
+  local version
+  version=$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -n 1)
+  printf '%s.r%s.g%s' "$version" "$(git rev-list --count HEAD)" "$(git rev-parse --short HEAD)"
+}
+
+prepare() {
+  cd "$srcdir/media-launcher"
+  cargo fetch --locked --target x86_64-unknown-linux-gnu
+}
+
+build() {
+  cd "$srcdir/media-launcher"
+  export CARGO_TARGET_DIR=target
+  cargo build --frozen --release
+}
+
+package() {
+  cd "$srcdir/media-launcher"
+  install -Dm755 target/release/media-launcher "$pkgdir/usr/bin/media-launcher"
+  install -Dm644 packaging/media-launcher.desktop "$pkgdir/usr/share/applications/media-launcher.desktop"
+  install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+  install -Dm644 packaging/config.toml "$pkgdir/usr/share/doc/$pkgname/config.example.toml"
+}

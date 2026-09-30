@@ -1,0 +1,32 @@
+{
+  "assets": [
+    {
+      "name": "libmpv",
+      "version": "20260928",
+      "file": "mpv-dev-x86_64-20260928-git-e470f8986e.7z",
+      "url": "https://github.com/shinchiro/mpv-winbuild-cmake/releases/download/20260928/mpv-dev-x86_64-20260928-git-e470f8986e.7z",
+      "sha256": "81795d759e01016f1550fd71651a1a5d59ab5c28ef31c0b6793224e9cff39459"
+    },
+    {
+      "name": "yt-dlp",
+      "version": "2026.08.19",
+      "file": "yt-dlp.exe",
+      "url": "https://github.com/yt-dlp/yt-dlp/releases/download/2026.08.19/yt-dlp.exe",
+      "sha256": "66674953fe251b89f4d08c5f0e35e0728679bd67ab3d7d05c0562af101dd3e7a"
+    },
+    {
+      "name": "deno",
+      "version": "v2.9.7",
+      "file": "deno-x86_64-pc-windows-msvc.zip",
+      "url": "https://github.com/denoland/deno/releases/download/v2.9.7/deno-x86_64-pc-windows-msvc.zip",
+      "sha256": "a0c3101b4158d1dfb7d6a78a7bf0f3de80c96bb423c152beec8beb22786f2238"
+    },
+    {
+      "name": "vulkan-loader",
+      "version": "1.4.328.1",
+      "file": "VulkanRT-X64-1.4.328.1-Components.zip",
+      "url": "https://sdk.lunarg.com/sdk/download/1.4.328.1/windows/VulkanRT-X64-1.4.328.1-Components.zip",
+      "sha256": "293efbb2c11e60429df7770f40e3c5c811a7fa42af81de0cc41e8718ddb2b373"
+    }
+  ]
+}

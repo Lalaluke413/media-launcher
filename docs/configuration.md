@@ -48,10 +48,15 @@ args = ['--extractor-args', 'youtube:player_client=default']
 All fields are optional. Defaults are: no local library, UI scale `1.0`, listen
 address `0.0.0.0:8765`, a fullscreen application window, embedded libmpv, and no
 extra arguments. For the external backend, mpv defaults to PATH and fullscreen.
-Omitting `yt_dlp.executable` leaves mpv's normal executable discovery in charge.
+Omitting `yt_dlp.executable` selects `yt-dlp.exe` beside the application on Windows
+when present, otherwise leaving mpv's normal executable discovery in charge.
+With the bundled extractor, the app also supplies the adjacent Deno path unless
+`args` already specifies `--js-runtimes`. Explicit extractor paths remain
+user-managed and bypass this bundle configuration.
 The app's plugin directory and yt-dlp's default plugin discovery are included.
 Install a current yt-dlp for plugin support; youtube-dl does not support this
-customization setup. Neither mpv nor yt-dlp is bundled yet.
+customization setup. The Windows bundle includes these dependencies; the Arch
+package uses system packages. Plain Cargo builds do not download runtime tools.
 
 Use TOML literal strings (single quotes) for Windows paths:
 
@@ -128,7 +133,8 @@ Windows searches beside an explicitly selected DLL for those dependencies.
 
 A missing library or an initialization failure leaves the launcher visible with
 an error. Select the external backend explicitly if needed; there is no silent
-backend switch. Native libraries and yt-dlp are not bundled in this stage.
+backend switch. See [Windows packaging](../packaging/windows/README.md) for the
+initial bundle and installer build instructions.
 
 ## Custom extractors
 
