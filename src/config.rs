@@ -13,10 +13,13 @@ const HELP: &str =
     "media-launcher [--config PATH] [--data-dir PATH] [--root PATH] [--mpv EXECUTABLE]
                [--yt-dlp EXECUTABLE] [--yt-dlp-plugin-dir PATH] [--ui-scale NUMBER]
                [--listen IP:PORT] [--show-paths]
+               [--player-backend embedded|external] [--libmpv PATH]
+               [--window-mode fullscreen|windowed|maximized]
 Settings are read from the per-user config.toml; command-line values override them.
-No library root is required. Defaults: mpv on PATH, UI scale 1.0, 0.0.0.0:8765.
+No library root is required. Defaults: embedded libmpv, fullscreen window, UI scale 1.0, 0.0.0.0:8765.
 UI scale must be between 0.5 and 4.0. Repeat --yt-dlp-plugin-dir for multiple paths.
---show-paths prints customization locations without creating files.";
+--show-paths prints customization locations without creating files.
+--mpv sets the external executable; choose --player-backend external to use it.";
 
 #[derive(Debug, Deserialize)]
 #[serde(default, deny_unknown_fields)]
@@ -25,6 +28,7 @@ pub struct Config {
     pub ui_scale: f32,
     pub listen: SocketAddr,
     pub player: PlayerConfig,
+    pub window: WindowConfig,
     pub yt_dlp: ExtractorConfig,
 }
 impl Default for Config {
@@ -34,6 +38,7 @@ impl Default for Config {
             ui_scale: 1.0,
             listen: "0.0.0.0:8765".parse().unwrap(),
             player: PlayerConfig::default(),
+            window: WindowConfig::default(),
             yt_dlp: ExtractorConfig::default(),
         }
     }
@@ -41,6 +46,8 @@ impl Default for Config {
 #[derive(Debug, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct PlayerConfig {
+    pub backend: PlayerBackend,
+    pub libmpv: Option<PathBuf>,
     pub executable: PathBuf,
     pub fullscreen: bool,
     pub args: Vec<String>,
@@ -48,9 +55,44 @@ pub struct PlayerConfig {
 impl Default for PlayerConfig {
     fn default() -> Self {
         Self {
+            backend: PlayerBackend::Embedded,
+            libmpv: None,
             executable: "mpv".into(),
             fullscreen: true,
             args: vec![],
+        }
+    }
+}
+#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum PlayerBackend {
+    #[default]
+    Embedded,
+    External,
+}
+#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum WindowMode {
+    #[default]
+    Fullscreen,
+    Windowed,
+    Maximized,
+}
+#[derive(Debug, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct WindowConfig {
+    pub mode: WindowMode,
+    pub size: [f32; 2],
+    pub decorations: bool,
+    pub resizable: bool,
+}
+impl Default for WindowConfig {
+    fn default() -> Self {
+        Self {
+            mode: WindowMode::Fullscreen,
+            size: [1280.0, 720.0],
+            decorations: true,
+            resizable: true,
         }
     }
 }
@@ -122,6 +164,9 @@ struct Overrides {
     data_dir: Option<PathBuf>,
     root: Option<PathBuf>,
     mpv: Option<PathBuf>,
+    libmpv: Option<PathBuf>,
+    backend: Option<PlayerBackend>,
+    window_mode: Option<WindowMode>,
     yt_dlp: Option<PathBuf>,
     plugin_dirs: Vec<PathBuf>,
     scale: Option<f32>,
@@ -143,6 +188,9 @@ impl Overrides {
                     | "--data-dir"
                     | "--root"
                     | "--mpv"
+                    | "--libmpv"
+                    | "--player-backend"
+                    | "--window-mode"
                     | "--yt-dlp"
                     | "--yt-dlp-plugin-dir"
                     | "--ui-scale"
@@ -157,6 +205,26 @@ impl Overrides {
                 "--data-dir" => result.data_dir = Some(value.into()),
                 "--root" => result.root = Some(value.into()),
                 "--mpv" => result.mpv = Some(value.into()),
+                "--libmpv" => result.libmpv = Some(value.into()),
+                "--player-backend" => {
+                    result.backend = Some(match value.to_str() {
+                        Some("embedded") => PlayerBackend::Embedded,
+                        Some("external") => PlayerBackend::External,
+                        _ => return Err("--player-backend must be embedded or external".into()),
+                    })
+                }
+                "--window-mode" => {
+                    result.window_mode = Some(match value.to_str() {
+                        Some("fullscreen") => WindowMode::Fullscreen,
+                        Some("windowed") => WindowMode::Windowed,
+                        Some("maximized") => WindowMode::Maximized,
+                        _ => {
+                            return Err(
+                                "--window-mode must be fullscreen, windowed, or maximized".into()
+                            );
+                        }
+                    })
+                }
                 "--yt-dlp" => result.yt_dlp = Some(value.into()),
                 "--yt-dlp-plugin-dir" => result.plugin_dirs.push(value.into()),
                 "--ui-scale" => {
@@ -318,6 +386,39 @@ fn read_settings(
         .mpv
         .map(|p| executable(&p, cwd))
         .unwrap_or_else(|| executable(&config.player.executable, base));
+    if config
+        .player
+        .libmpv
+        .as_ref()
+        .is_some_and(|p| p.as_os_str().is_empty())
+        || overrides
+            .libmpv
+            .as_ref()
+            .is_some_and(|p| p.as_os_str().is_empty())
+    {
+        return Err("player.libmpv must not be empty".into());
+    }
+    config.player.libmpv = overrides
+        .libmpv
+        .map(|p| absolute(&p, cwd))
+        .or_else(|| config.player.libmpv.map(|p| absolute(&p, base)));
+    if let Some(backend) = overrides.backend {
+        config.player.backend = backend;
+    }
+    if let Some(mode) = overrides.window_mode {
+        config.window.mode = mode;
+    }
+    if config
+        .window
+        .size
+        .iter()
+        .any(|v| !v.is_finite() || !(320.0..=16384.0).contains(v))
+    {
+        return Err(
+            "window.size must contain two finite dimensions between 320 and 16384 logical pixels"
+                .into(),
+        );
+    }
     config.yt_dlp.executable = overrides
         .yt_dlp
         .map(|p| executable(&p, cwd))
@@ -523,6 +624,47 @@ mod tests {
         assert!(read(dir.path(), "", &["--ui-scale", "NaN"]).is_err());
         let settings = read(dir.path(), "[yt_dlp]\nplugin_dirs = ['missing']", &[]).unwrap();
         assert!(settings.prepare().unwrap_err().contains("missing"));
+    }
+    #[test]
+    fn window_and_backend_settings_are_validated_and_overridden() {
+        let dir = tempfile::tempdir().unwrap();
+        let settings = read(dir.path(), "", &[]).unwrap();
+        assert_eq!(settings.config.player.backend, PlayerBackend::Embedded);
+        assert_eq!(settings.config.window.mode, WindowMode::Fullscreen);
+        let text = "[window]\nmode = 'windowed'\nsize = [800, 600]\ndecorations = false\nresizable = false\n[player]\nbackend = 'external'\nlibmpv = './mpv-library'";
+        let settings = read(
+            dir.path(),
+            text,
+            &[
+                "--player-backend",
+                "embedded",
+                "--window-mode",
+                "maximized",
+                "--libmpv",
+                "other-library",
+            ],
+        )
+        .unwrap();
+        assert_eq!(settings.config.player.backend, PlayerBackend::Embedded);
+        assert_eq!(settings.config.window.mode, WindowMode::Maximized);
+        assert_eq!(settings.config.window.size, [800.0, 600.0]);
+        assert!(!settings.config.window.decorations);
+        assert!(!settings.config.window.resizable);
+        assert_eq!(
+            settings.config.player.libmpv,
+            Some(dir.path().join("cwd/other-library"))
+        );
+        for text in [
+            "[window]\nmode = 'bad'",
+            "[window]\nsize = [nan, 720]",
+            "[window]\nsize = [0, 720]",
+            "[window]\nsize = [800]",
+            "[player]\nbackend = 'bad'",
+            "[player]\nlibmpv = ''",
+        ] {
+            assert!(read(dir.path(), text, &[]).is_err(), "accepted {text}");
+        }
+        assert!(read(dir.path(), "", &["--window-mode", "bad"]).is_err());
     }
     #[test]
     fn extractor_configuration_supports_repeated_options_and_special_characters() {

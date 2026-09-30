@@ -7,7 +7,18 @@
 ui_scale = 1.0
 listen = '0.0.0.0:8765'
 
+[window]
+# Application window; these settings apply to both playback backends.
+mode = 'fullscreen' # 'fullscreen', 'windowed', or 'maximized'
+size = [1280, 720]  # initial windowed size, in logical pixels
+resizable = true
+decorations = true
+
 [player]
+backend = 'embedded' # 'embedded' or 'external'
+# Optional explicit libmpv client API 2 library path:
+# libmpv = 'C:\Tools\mpv\mpv-2.dll'
+# executable and fullscreen apply only to the external backend.
 executable = 'mpv'
 fullscreen = true
 # Each entry is one mpv option; use --option=value for values.

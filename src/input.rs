@@ -8,11 +8,15 @@ pub enum Action {
     Back,
     Refresh,
     Quit,
+    SeekBackward,
+    SeekForward,
+    PlayPause,
+    Fullscreen,
 }
 
 /// Snapshot of controls, combining keyboard and all connected gamepads.
 #[derive(Default, Clone, Copy)]
-pub struct Controls(pub [bool; 6]);
+pub struct Controls(pub [bool; 10]);
 
 pub struct Input {
     previous: Controls,
@@ -58,6 +62,10 @@ impl Input {
             Action::Back,
             Action::Refresh,
             Action::Quit,
+            Action::SeekBackward,
+            Action::SeekForward,
+            Action::PlayPause,
+            Action::Fullscreen,
         ];
         let mut result = vec![];
         for (i, action) in actions.iter().enumerate().skip(2) {
@@ -94,7 +102,9 @@ mod tests {
         let mut input = Input::new(t);
         input.update(Controls::default(), t);
         input.update(Controls::default(), t + Duration::from_millis(201));
-        let controls = Controls([false, false, false, true, true, true]);
+        let controls = Controls([
+            false, false, false, true, true, true, false, false, false, false,
+        ]);
         assert_eq!(
             input.update(controls, t + Duration::from_millis(210)),
             vec![Action::Back, Action::Refresh, Action::Quit]
@@ -104,7 +114,9 @@ mod tests {
                 .update(controls, t + Duration::from_secs(1))
                 .is_empty()
         );
-        let up = Controls([true, false, false, false, false, false]);
+        let up = Controls([
+            true, false, false, false, false, false, false, false, false, false,
+        ]);
         assert_eq!(
             input.update(up, t + Duration::from_secs(2)),
             vec![Action::Up]
@@ -122,12 +134,36 @@ mod tests {
         assert!(input.update(up, t + Duration::from_millis(4100)).is_empty());
     }
     #[test]
+    fn playback_keys_share_edges_and_neutral_gating() {
+        let t = Instant::now();
+        let mut input = Input::new(t);
+        let held = Controls([
+            false, false, false, false, false, false, true, true, true, true,
+        ]);
+        assert!(input.update(held, t).is_empty());
+        assert!(input.update(held, t + Duration::from_secs(1)).is_empty());
+        input.update(Controls::default(), t + Duration::from_secs(2));
+        input.update(Controls::default(), t + Duration::from_millis(2201));
+        assert_eq!(
+            input.update(held, t + Duration::from_millis(2210)),
+            vec![
+                Action::SeekBackward,
+                Action::SeekForward,
+                Action::PlayPause,
+                Action::Fullscreen
+            ]
+        );
+        assert!(input.update(held, t + Duration::from_secs(3)).is_empty());
+    }
+    #[test]
     fn repeat_edges_and_playback_neutral_gate() {
         let t = Instant::now();
         let mut input = Input::new(t);
         input.update(Controls::default(), t);
         input.update(Controls::default(), t + Duration::from_millis(201));
-        let held = Controls([false, true, true, false, false, false]);
+        let held = Controls([
+            false, true, true, false, false, false, false, false, false, false,
+        ]);
         assert_eq!(
             input.update(held, t + Duration::from_millis(210)),
             vec![Action::Open, Action::Down]

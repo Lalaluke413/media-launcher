@@ -1,11 +1,10 @@
 mod browser;
-mod config;
 mod input;
-mod player;
 mod web;
 
 use eframe::egui;
 use input::{Action, Controls, Input};
+use media_launcher::{config, player};
 use std::{
     sync::{
         Arc, Mutex,
@@ -16,7 +15,7 @@ use std::{
 
 #[derive(Default)]
 struct PadState {
-    controls: [bool; 6],
+    controls: [bool; 10],
     error: Option<String>,
 }
 struct Gamepads {
@@ -41,12 +40,15 @@ impl Gamepads {
             };
             while !stopped.load(Ordering::Relaxed) {
                 while pads.next_event().is_some() {}
-                let mut controls = [false; 6];
+                let mut controls = [false; 10];
                 for (_, pad) in pads.gamepads() {
                     use gilrs::{Axis, Button};
                     let y = pad.value(Axis::LeftStickY);
                     controls[0] |= pad.is_pressed(Button::DPadUp) || y > 0.35;
                     controls[1] |= pad.is_pressed(Button::DPadDown) || y < -0.35;
+                    let x = pad.value(Axis::LeftStickX);
+                    controls[6] |= pad.is_pressed(Button::DPadLeft) || x < -0.35;
+                    controls[7] |= pad.is_pressed(Button::DPadRight) || x > 0.35;
                     for (index, button) in
                         [Button::South, Button::East, Button::West, Button::Start]
                             .into_iter()
@@ -98,9 +100,14 @@ impl App {
             .insert(egui::TextStyle::Heading, egui::FontId::proportional(36.0));
         style.spacing.item_spacing = egui::vec2(12.0, 12.0);
         cc.egui_ctx.set_style(style);
+        let player = player::Player::new(&settings, cc);
+        let mut browser = browser::Browser::new(settings.config.root.clone());
+        if let Some(error) = player.startup_error() {
+            browser.error = Some(error.into());
+        }
         Self {
-            browser: browser::Browser::new(settings.config.root.clone()),
-            player: player::Player::default(),
+            browser,
+            player,
             input: Input::new(Instant::now()),
             pads: Gamepads::new(cc.egui_ctx.clone()),
             ensure_visible: true,
@@ -111,6 +118,8 @@ impl App {
     fn action(&mut self, action: Action, ctx: &egui::Context) {
         match action {
             Action::Quit => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
+            Action::Fullscreen => toggle_fullscreen(ctx),
+            Action::SeekBackward | Action::SeekForward | Action::PlayPause => {}
             Action::Back => {
                 self.browser.back();
                 self.ensure_visible = true;
@@ -162,7 +171,53 @@ impl App {
         }
     }
 }
+impl App {
+    fn playback_command(&mut self, args: &[&str]) {
+        if let Err(error) = self.player.command(args) {
+            eprintln!("{error}");
+            self.browser.error = Some(error);
+        }
+    }
+    fn playback_ui(&mut self, ctx: &egui::Context) {
+        ctx.request_repaint_after(Duration::from_millis(100));
+        egui::CentralPanel::default()
+            .frame(egui::Frame::NONE)
+            .show(ctx, |ui| {
+                self.player.paint(ui);
+            });
+        let status = self.player.status();
+        egui::Area::new("player_controls".into()).order(egui::Order::Foreground)
+            .anchor(egui::Align2::CENTER_BOTTOM, [0.0, -12.0]).show(ctx, |ui| {
+                egui::Frame::new().fill(egui::Color32::from_black_alpha(210)).inner_margin(12.0).show(ui, |ui| {
+                    if status.loading { ui.label("Loading media…"); }
+                    ui.horizontal_wrapped(|ui| {
+                        if ui.button("−10s").clicked() { self.playback_command(&["seek", "-10", "relative"]); }
+                        if ui.button(if status.paused { "Play" } else { "Pause" }).clicked() { self.playback_command(&["cycle", "pause"]); }
+                        if ui.button("+10s").clicked() { self.playback_command(&["seek", "10", "relative"]); }
+                        if ui.button("Back").clicked() { self.playback_command(&["stop"]); self.input.block(); }
+                        if let Some(position) = status.position {
+                            let duration = status.duration.map_or_else(|| "Live".into(), elapsed);
+                            ui.label(format!("{} / {duration}", elapsed(position)));
+                        }
+                    });
+                    ui.label("A / Enter / Space: Pause · B / Esc: Back · ↑ ↓: Volume · ← →: Seek · F: Fullscreen · Start / Q: Quit");
+                });
+            });
+    }
+}
+fn toggle_fullscreen(ctx: &egui::Context) {
+    let fullscreen = ctx.input(|i| i.viewport().fullscreen.unwrap_or(false));
+    ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(!fullscreen));
+}
+fn elapsed(seconds: f64) -> String {
+    let seconds = seconds.max(0.0) as u64;
+    format!("{}:{:02}", seconds / 60, seconds % 60)
+}
 impl eframe::App for App {
+    fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        self.player.close();
+    }
+
     fn update(&mut self, ctx: &egui::Context, _: &mut eframe::Frame) {
         while let Some(request) = self.web.try_recv() {
             let result = if self.player.active() {
@@ -177,22 +232,22 @@ impl eframe::App for App {
             let _ = request.reply.send(result);
         }
 
-        if self.player.active() {
+        if let Some(result) = self.player.poll() {
+            self.browser.refresh();
+            if let Err(error) = result {
+                eprintln!("{error}");
+                self.browser.error = Some(error);
+            }
+            self.input.block();
+            self.ensure_visible = true;
+        }
+        if self.player.active() && !self.player.is_embedded() {
             if ctx.input(|i| i.viewport().close_requested()) {
                 ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
             }
-            if let Some(result) = self.player.poll() {
-                self.browser.refresh();
-                if let Err(e) = result {
-                    eprintln!("{e}");
-                    self.browser.error = Some(e);
-                }
-                self.input.block();
-                self.ensure_visible = true;
-            }
             ctx.request_repaint_after(Duration::from_millis(100));
             egui::CentralPanel::default().show(ctx, |ui| {
-                ui.heading("Playing in mpv");
+                ui.heading("Playing in external mpv");
                 ui.label("The browser will resume when playback ends.");
             });
             return;
@@ -205,6 +260,10 @@ impl eframe::App for App {
             egui::Key::Escape,
             egui::Key::R,
             egui::Key::Q,
+            egui::Key::ArrowLeft,
+            egui::Key::ArrowRight,
+            egui::Key::Space,
+            egui::Key::F,
         ];
         ctx.input(|i| {
             for (index, key) in keys.into_iter().enumerate() {
@@ -218,14 +277,35 @@ impl eframe::App for App {
         if controls.0[0] || controls.0[1] {
             ctx.request_repaint_after(Duration::from_millis(16));
         }
-        for action in self.input.update(controls, Instant::now()) {
+        let actions = self.input.update(controls, Instant::now());
+        if self.player.active() {
+            for action in actions {
+                match action {
+                    Action::Quit => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
+                    Action::Back => {
+                        self.playback_command(&["stop"]);
+                        self.input.block();
+                    }
+                    Action::Open | Action::PlayPause => self.playback_command(&["cycle", "pause"]),
+                    Action::SeekBackward => self.playback_command(&["seek", "-10", "relative"]),
+                    Action::SeekForward => self.playback_command(&["seek", "10", "relative"]),
+                    Action::Fullscreen => toggle_fullscreen(ctx),
+                    Action::Up => self.playback_command(&["add", "volume", "5"]),
+                    Action::Down => self.playback_command(&["add", "volume", "-5"]),
+                    Action::Refresh => {}
+                }
+            }
+            self.playback_ui(ctx);
+            return;
+        }
+        for action in actions {
             self.action(action, ctx);
             if self.player.active() {
+                ctx.request_repaint();
                 break;
             }
         }
         if self.player.active() {
-            ctx.request_repaint();
             return;
         }
         egui::TopBottomPanel::top("path").show(ctx, |ui| {
@@ -331,13 +411,20 @@ fn main() -> eframe::Result {
             std::process::exit(2);
         }
     };
+    let window = &settings.config.window;
+    let viewport = egui::ViewportBuilder::default()
+        .with_title("Media Launcher")
+        .with_fullscreen(window.mode == config::WindowMode::Fullscreen)
+        .with_maximized(window.mode == config::WindowMode::Maximized)
+        .with_inner_size(window.size)
+        .with_decorations(window.decorations)
+        .with_resizable(window.resizable)
+        .with_app_id("media-launcher");
     eframe::run_native(
         "media-launcher",
         eframe::NativeOptions {
-            viewport: egui::ViewportBuilder::default()
-                .with_title("Media Launcher")
-                .with_fullscreen(true)
-                .with_app_id("media-launcher"),
+            viewport,
+            renderer: eframe::Renderer::Glow,
             ..Default::default()
         },
         Box::new(move |cc| Ok(Box::new(App::new(cc, settings)))),

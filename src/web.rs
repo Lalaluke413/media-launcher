@@ -95,11 +95,15 @@ fn handle(stream: &mut TcpStream, requests: &Sender<Request>, ctx: &egui::Contex
         ctx.request_repaint();
         match result.recv_timeout(Duration::from_secs(2)) {
             Ok(Ok(())) => redirect(stream),
-            Ok(Err(_)) => respond(
+            Ok(Err(error)) => respond(
                 stream,
-                "409 Conflict",
-                "text/plain",
-                "Playback is already active\n",
+                if error == "Playback is already active" {
+                    "409 Conflict"
+                } else {
+                    "502 Bad Gateway"
+                },
+                "text/plain; charset=utf-8",
+                &format!("{error}\n"),
             ),
             Err(_) => respond(
                 stream,

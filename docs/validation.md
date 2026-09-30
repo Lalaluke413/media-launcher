@@ -1,3 +1,58 @@
+# Embedded playback validation — 2026-09-29
+
+Stage 3 defaults to libmpv playback inside the existing egui/OpenGL window,
+retains the external backend, and adds portable application-window settings.
+The user reported Stage 2 working on both Windows and Linux before this change.
+
+## Passed
+
+- `cargo build --locked --offline`: Linux application built.
+- `cargo test --locked --offline`: **18 passed**, 0 failed; two native/dependency
+  acceptance tests are ignored by default.
+- `cargo test --locked --offline --test embedded_playback -- --ignored --nocapture`:
+  **1 passed**, running a real native OpenGL window with installed libmpv 0.41.0
+  and yt-dlp on Linux. The test uses generated Y4M video and a localhost server,
+  with all media, configuration, plugin, and watch-later fixtures in temporary
+  directories. It verifies:
+  - Video pixels have the expected colors and orientation after window resizing.
+  - UI overlays remain visible after libmpv renders.
+  - Pause holds playback position; seeking while paused preserves pause.
+  - Back stops playback and honors mpv's existing resume preference.
+  - A second playback starts unpaused; EOF ends playback cleanly.
+  - Missing media reports an error and subsequent playback succeeds.
+  - URL playback invokes a user yt-dlp extractor and renders the resulting video.
+  - Normal mpv scripts and unrelated script options survive application overrides.
+  - Conflicting `vo`, `keep-open`, and extractor-path settings in mpv.conf do not
+    override application-owned playback integration.
+  - Legacy mpv input.conf bindings do not compete with application controls.
+  - Closing while video is playing frees render resources before player/window
+    teardown and returns without hanging.
+- `cargo clippy --locked --offline --all-targets -- -D warnings`: clean.
+- `cargo test --locked --offline mpv_loads_plugins -- --ignored --nocapture`:
+  **1 passed**, confirming the retained external backend still resolves media
+  through extractors in the user and extra plugin directories.
+- `cargo check --locked --offline --target x86_64-pc-windows-gnu --all-targets`:
+  application, library, and tests cross-compile for Windows without libmpv linker
+  files. This does not establish Windows runtime behavior.
+- `cargo fmt --check`, `git diff --check`, and updated CLI help: clean.
+
+Configuration tests cover window modes, size validation, backend/library choices,
+and CLI precedence. Input tests cover playback key edges and neutral gating.
+
+## Still required
+
+- Native Windows embedded playback using an API 2 libmpv DLL and its dependencies.
+- Physical controller and Steam Big Picture playback/return/quit on both platforms.
+- Linux Wayland, hardware decoding, subtitles/audio tracks, real audio output,
+  browser-cookie extraction, real streaming services, and 4K/TV checks.
+- Visual review of the application's basic playback overlay. The pixel acceptance
+  test verifies rendering and layering in a dedicated test window, not UI polish.
+
+Bundling dependencies, controller remapping, and richer player/settings menus
+remain later stages. The external backend remains explicitly selectable.
+
+---
+
 # Configuration and customization validation — 2026-09-29
 
 Stage 2 adds persistent TOML configuration, standard per-user configuration/data
