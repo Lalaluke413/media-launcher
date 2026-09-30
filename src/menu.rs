@@ -298,7 +298,7 @@ impl App {
                             if response.clicked_by(egui::PointerButton::Primary) { clicked = Some(index); }
                         }
                     });
-                    ui.label("Up / Down: Navigate · Left / Right: Adjust");
+                    ui.label("D-pad Up/Down: Navigate · D-pad Left/Right: Adjust");
                     let controls = self.preferences.as_ref().map_or(&self.settings.config.controls, |p| &p.controls);
                     ui.label(format!("{} / Enter: Select · {} / Esc: Back", controls.buttons[0].label(), controls.buttons[1].label()));
                     if panel == Panel::Settings { ui.small("Save keeps these preferences. Cancel restores previous settings."); }

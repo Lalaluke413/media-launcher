@@ -336,7 +336,7 @@ impl App {
                 egui::Frame::new().fill(egui::Color32::from_black_alpha(210)).inner_margin(12.0).show(ui, |ui| {
                     if status.loading { ui.label("Loading media…"); }
                     ui.horizontal_wrapped(|ui| {
-                        if ui.button("−10s").clicked_by(egui::PointerButton::Primary) { self.action(Action::Seek(-10), ctx); }
+                        if ui.button("-10s").clicked_by(egui::PointerButton::Primary) { self.action(Action::Seek(-10), ctx); }
                         if ui.button(if status.paused { "Play" } else { "Pause" }).clicked_by(egui::PointerButton::Primary) { self.action(Action::PlayPause, ctx); }
                         if ui.button("+10s").clicked_by(egui::PointerButton::Primary) { self.action(Action::Seek(10), ctx); }
                         if ui.button("Back").clicked_by(egui::PointerButton::Primary) { self.action(Action::Stop, ctx); }
@@ -347,7 +347,7 @@ impl App {
                         }
                     });
                     ui.label(format!("Volume {:.0}%{}", status.volume, if status.muted { " · Muted" } else { "" }));
-                    ui.label("A / Enter / Space: Pause · B / Esc: Back · Up / Down: Volume · Left / Right: Seek · F: Fullscreen · Start / M: Menu · Q: Quit");
+                    ui.label("A / Enter / Space: Pause · B / Esc: Back · D-pad Up/Down: Volume · D-pad Left/Right: Seek · F: Fullscreen · Start / M: Menu · Q: Quit");
                 });
             });
     }
@@ -545,7 +545,7 @@ impl eframe::App for App {
             }
             ui.separator();
             ui.label(format!(
-                "Up / Down: Move · {} / Enter: Open · {} / Esc: Back",
+                "D-pad Up/Down: Move · {} / Enter: Open · {} / Esc: Back",
                 self.settings.config.controls.buttons[0].label(),
                 self.settings.config.controls.buttons[1].label()
             ));
