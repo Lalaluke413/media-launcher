@@ -189,3 +189,7 @@ behavior still require target-machine testing.
 The [original v0.1 spec](docs/media-launcher-spec.md) records the historical
 single-machine design. Its Nix packaging and machine-specific paths no longer
 apply to the current project.
+
+Playback controls hide after three seconds without input while video is playing.
+Move the mouse or press a keyboard/controller button to reveal them. Controls
+stay visible while paused or loading; an explicitly opened menu stays open.

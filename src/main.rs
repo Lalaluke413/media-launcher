@@ -110,6 +110,7 @@ struct App {
     preferences: Option<menu::Preferences>,
     rebind_armed: bool,
     menu_error: Option<String>,
+    overlay_activity: Instant,
 }
 impl App {
     fn new(cc: &eframe::CreationContext<'_>, settings: config::Settings) -> Self {
@@ -145,12 +146,14 @@ impl App {
             preferences: None,
             rebind_armed: false,
             menu_error: None,
+            overlay_activity: Instant::now(),
             phone: phone::PhoneLink::default(),
         };
         app.apply_audio();
         app
     }
     fn action(&mut self, action: Action, ctx: &egui::Context) {
+        self.overlay_activity = Instant::now();
         if action == Action::Quit {
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
             return;
@@ -273,6 +276,7 @@ impl App {
                         .and_then(|path| self.player.launch(&self.settings, path.as_os_str()));
                     match result {
                         Ok(()) => {
+                            self.overlay_activity = Instant::now();
                             self.apply_audio();
                             self.input.block();
                         }
@@ -293,6 +297,7 @@ impl App {
         }
         self.player
             .launch(&self.settings, std::ffi::OsStr::new(url))?;
+        self.overlay_activity = Instant::now();
         self.cancel_preferences(ctx);
         self.panel = None;
         self.browser.error = None;
@@ -334,6 +339,12 @@ impl App {
                 self.player.paint(ui);
             });
         let status = self.player.status();
+        if !status.paused
+            && !status.loading
+            && self.overlay_activity.elapsed() >= Duration::from_secs(3)
+        {
+            return;
+        }
         egui::Area::new("player_controls".into()).order(egui::Order::Foreground)
             .anchor(egui::Align2::CENTER_BOTTOM, [0.0, -12.0]).show(ctx, |ui| {
                 egui::Frame::new().fill(egui::Color32::from_black_alpha(210)).inner_margin(12.0).show(ui, |ui| {
@@ -479,6 +490,27 @@ impl eframe::App for App {
             edges.0[slot] = pressed[index];
         }
         keyboard_controls(ctx, &mut controls, &mut edges);
+        // Held buttons keep controls visible. Pointer movement and all key presses
+        // also reveal them, including taps that arrive between video frames.
+        let local_activity = controls.0.iter().any(|held| *held)
+            || raw_buttons.iter().any(|held| *held)
+            || ctx.input(|input| {
+                !input.keys_down.is_empty()
+                    || input.pointer.any_down()
+                    || input.events.iter().any(|event| {
+                        matches!(
+                            event,
+                            egui::Event::PointerMoved(_)
+                                | egui::Event::MouseMoved(_)
+                                | egui::Event::PointerButton { pressed: true, .. }
+                                | egui::Event::MouseWheel { .. }
+                                | egui::Event::Key { pressed: true, .. }
+                        )
+                    })
+            });
+        if local_activity || status.paused || status.loading {
+            self.overlay_activity = Instant::now();
+        }
         if let Some(menu::Panel::Rebind(index)) = self.panel {
             self.capture_binding(index, raw_buttons, ctx);
             if self.player.active() {
