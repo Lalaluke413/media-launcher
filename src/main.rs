@@ -1,5 +1,6 @@
 mod browser;
 mod input;
+mod menu;
 mod web;
 
 use eframe::egui;
@@ -15,7 +16,10 @@ use std::{
 
 #[derive(Default)]
 struct PadState {
-    controls: [bool; 10],
+    controls: [bool; 4],
+    buttons: [bool; 10],
+    pressed_controls: [bool; 4],
+    pressed_buttons: [bool; 10],
     error: Option<String>,
 }
 struct Gamepads {
@@ -40,26 +44,42 @@ impl Gamepads {
             };
             while !stopped.load(Ordering::Relaxed) {
                 while pads.next_event().is_some() {}
-                let mut controls = [false; 10];
+                let mut controls = [false; 4];
+                let mut buttons = [false; 10];
                 for (_, pad) in pads.gamepads() {
                     use gilrs::{Axis, Button};
                     let y = pad.value(Axis::LeftStickY);
+                    let x = pad.value(Axis::LeftStickX);
                     controls[0] |= pad.is_pressed(Button::DPadUp) || y > 0.35;
                     controls[1] |= pad.is_pressed(Button::DPadDown) || y < -0.35;
-                    let x = pad.value(Axis::LeftStickX);
-                    controls[6] |= pad.is_pressed(Button::DPadLeft) || x < -0.35;
-                    controls[7] |= pad.is_pressed(Button::DPadRight) || x > 0.35;
-                    for (index, button) in
-                        [Button::South, Button::East, Button::West, Button::Start]
-                            .into_iter()
-                            .enumerate()
-                    {
-                        controls[index + 2] |= pad.is_pressed(button);
+                    controls[2] |= pad.is_pressed(Button::DPadLeft) || x < -0.35;
+                    controls[3] |= pad.is_pressed(Button::DPadRight) || x > 0.35;
+                    let physical = [
+                        Button::South,
+                        Button::East,
+                        Button::West,
+                        Button::North,
+                        Button::Start,
+                        Button::Select,
+                        Button::LeftTrigger,
+                        Button::RightTrigger,
+                        Button::LeftThumb,
+                        Button::RightThumb,
+                    ];
+                    for (index, button) in physical.into_iter().enumerate() {
+                        buttons[index] |= pad.is_pressed(button);
                     }
                 }
                 let mut state = shared.lock().unwrap();
-                if controls != state.controls {
+                if controls != state.controls || buttons != state.buttons {
+                    for (index, pressed) in controls.iter().enumerate() {
+                        state.pressed_controls[index] |= *pressed && !state.controls[index];
+                    }
+                    for (index, pressed) in buttons.iter().enumerate() {
+                        state.pressed_buttons[index] |= *pressed && !state.buttons[index];
+                    }
                     state.controls = controls;
+                    state.buttons = buttons;
                     ctx.request_repaint();
                 }
                 drop(state);
@@ -83,6 +103,11 @@ struct App {
     pads: Gamepads,
     ensure_visible: bool,
     web: web::Server,
+    panel: Option<menu::Panel>,
+    menu_selected: usize,
+    preferences: Option<menu::Preferences>,
+    rebind_armed: bool,
+    menu_error: Option<String>,
 }
 impl App {
     fn new(cc: &eframe::CreationContext<'_>, settings: config::Settings) -> Self {
@@ -105,7 +130,7 @@ impl App {
         if let Some(error) = player.startup_error() {
             browser.error = Some(error.into());
         }
-        Self {
+        let mut app = Self {
             browser,
             player,
             input: Input::new(Instant::now()),
@@ -113,13 +138,97 @@ impl App {
             ensure_visible: true,
             web: web::Server::new(settings.config.listen, cc.egui_ctx.clone()),
             settings,
-        }
+            panel: None,
+            menu_selected: 0,
+            preferences: None,
+            rebind_armed: false,
+            menu_error: None,
+        };
+        app.apply_audio();
+        app
     }
     fn action(&mut self, action: Action, ctx: &egui::Context) {
+        if action == Action::Quit {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            return;
+        }
+        if action == Action::Menu {
+            if self.panel.is_some() {
+                self.cancel_preferences(ctx);
+                self.panel = None;
+            } else {
+                self.panel = Some(menu::Panel::Menu);
+                self.menu_selected = 0;
+            }
+            self.input.block();
+            return;
+        }
+        // Explicit playback actions from remote/UI are independent of navigation.
+        match action {
+            Action::PlayPause if self.player.active() => {
+                self.playback_command(&["cycle", "pause"]);
+                return;
+            }
+            Action::Stop => {
+                self.cancel_preferences(ctx);
+                self.playback_command(&["stop"]);
+                self.panel = None;
+                self.input.block();
+                return;
+            }
+            Action::Seek(seconds) => {
+                self.playback_command(&["seek", &seconds.to_string(), "relative"]);
+                return;
+            }
+            Action::Volume(amount) => {
+                let audio = self
+                    .preferences
+                    .as_mut()
+                    .map_or(&mut self.settings.config.audio, |p| &mut p.audio);
+                audio.volume = (audio.volume + amount as f64).clamp(0.0, 100.0);
+                self.apply_audio();
+                return;
+            }
+            Action::Mute => {
+                let audio = self
+                    .preferences
+                    .as_mut()
+                    .map_or(&mut self.settings.config.audio, |p| &mut p.audio);
+                audio.muted = !audio.muted;
+                self.apply_audio();
+                return;
+            }
+            _ => {}
+        }
+        if self.panel.is_some() {
+            self.panel_action(action, ctx);
+            return;
+        }
+        if self.player.active() {
+            match action {
+                Action::Back => self.action(Action::Stop, ctx),
+                Action::Confirm => self.action(Action::PlayPause, ctx),
+                Action::Left => self.action(Action::Seek(-10), ctx),
+                Action::Right => self.action(Action::Seek(10), ctx),
+                Action::Up => self.action(Action::Volume(5), ctx),
+                Action::Down => self.action(Action::Volume(-5), ctx),
+                Action::Fullscreen => toggle_fullscreen(ctx, &self.settings.config.window),
+                _ => {}
+            }
+            return;
+        }
+
         match action {
             Action::Quit => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
             Action::Fullscreen => toggle_fullscreen(ctx, &self.settings.config.window),
-            Action::SeekBackward | Action::SeekForward | Action::PlayPause => {}
+            Action::Left
+            | Action::Right
+            | Action::PlayPause
+            | Action::Menu
+            | Action::Stop
+            | Action::Seek(_)
+            | Action::Volume(_)
+            | Action::Mute => {}
             Action::Back => {
                 self.browser.back();
                 self.ensure_visible = true;
@@ -138,7 +247,7 @@ impl App {
                     .select(self.browser.view.selected.saturating_add(1));
                 self.ensure_visible = true;
             }
-            Action::Open => {
+            Action::Confirm => {
                 if self.browser.error.is_some() {
                     self.browser.refresh();
                     return;
@@ -160,7 +269,10 @@ impl App {
                         .media_path(&entry)
                         .and_then(|path| self.player.launch(&self.settings, path.as_os_str()));
                     match result {
-                        Ok(()) => self.input.block(),
+                        Ok(()) => {
+                            self.apply_audio();
+                            self.input.block();
+                        }
                         Err(e) => {
                             eprintln!("{e}");
                             self.browser.error = Some(e);
@@ -172,6 +284,39 @@ impl App {
     }
 }
 impl App {
+    fn play_url(&mut self, url: &str, ctx: &egui::Context) -> Result<(), String> {
+        if self.player.active() {
+            return Err("Playback is already active".into());
+        }
+        self.player
+            .launch(&self.settings, std::ffi::OsStr::new(url))?;
+        self.cancel_preferences(ctx);
+        self.panel = None;
+        self.browser.error = None;
+        self.apply_audio();
+        self.input.block();
+        Ok(())
+    }
+    fn apply_audio(&mut self) {
+        if self.player.is_embedded() {
+            let audio = self
+                .preferences
+                .as_ref()
+                .map_or(&self.settings.config.audio, |p| &p.audio);
+            let volume = audio.volume.to_string();
+            let mute = if audio.muted { "yes" } else { "no" };
+            self.playback_command(&["set", "volume", &volume]);
+            self.playback_command(&["set", "mute", mute]);
+        }
+    }
+    fn paint_video(&self, ctx: &egui::Context) {
+        ctx.request_repaint_after(Duration::from_millis(100));
+        egui::CentralPanel::default()
+            .frame(egui::Frame::NONE)
+            .show(ctx, |ui| {
+                self.player.paint(ui);
+            });
+    }
     fn playback_command(&mut self, args: &[&str]) {
         if let Err(error) = self.player.command(args) {
             eprintln!("{error}");
@@ -191,19 +336,46 @@ impl App {
                 egui::Frame::new().fill(egui::Color32::from_black_alpha(210)).inner_margin(12.0).show(ui, |ui| {
                     if status.loading { ui.label("Loading media…"); }
                     ui.horizontal_wrapped(|ui| {
-                        if ui.button("−10s").clicked() { self.playback_command(&["seek", "-10", "relative"]); }
-                        if ui.button(if status.paused { "Play" } else { "Pause" }).clicked() { self.playback_command(&["cycle", "pause"]); }
-                        if ui.button("+10s").clicked() { self.playback_command(&["seek", "10", "relative"]); }
-                        if ui.button("Back").clicked() { self.playback_command(&["stop"]); self.input.block(); }
+                        if ui.button("−10s").clicked_by(egui::PointerButton::Primary) { self.action(Action::Seek(-10), ctx); }
+                        if ui.button(if status.paused { "Play" } else { "Pause" }).clicked_by(egui::PointerButton::Primary) { self.action(Action::PlayPause, ctx); }
+                        if ui.button("+10s").clicked_by(egui::PointerButton::Primary) { self.action(Action::Seek(10), ctx); }
+                        if ui.button("Back").clicked_by(egui::PointerButton::Primary) { self.action(Action::Stop, ctx); }
+                        if ui.button("Menu").clicked_by(egui::PointerButton::Primary) { self.action(Action::Menu, ctx); }
                         if let Some(position) = status.position {
                             let duration = status.duration.map_or_else(|| "Live".into(), elapsed);
                             ui.label(format!("{} / {duration}", elapsed(position)));
                         }
                     });
-                    ui.label("A / Enter / Space: Pause · B / Esc: Back · ↑ ↓: Volume · ← →: Seek · F: Fullscreen · Start / Q: Quit");
+                    ui.label(format!("Volume {:.0}%{}", status.volume, if status.muted { " · Muted" } else { "" }));
+                    ui.label("A / Enter / Space: Pause · B / Esc: Back · Up / Down: Volume · Left / Right: Seek · F: Fullscreen · Start / M: Menu · Q: Quit");
                 });
             });
     }
+}
+fn keyboard_controls(ctx: &egui::Context, controls: &mut Controls, pressed: &mut Controls) {
+    let keys = [
+        egui::Key::ArrowUp,
+        egui::Key::ArrowDown,
+        egui::Key::Enter,
+        egui::Key::Escape,
+        egui::Key::R,
+        egui::Key::M,
+        egui::Key::ArrowLeft,
+        egui::Key::ArrowRight,
+        egui::Key::Space,
+        egui::Key::F,
+        egui::Key::Q,
+        egui::Key::V,
+    ];
+    ctx.input(|input| {
+        for (index, key) in keys.into_iter().enumerate() {
+            // Preserve a tap whose down/up events both arrived between video frames.
+            let edge = input.events.iter().any(|event| matches!(event,
+                egui::Event::Key { key: event_key, pressed: true, repeat: false, .. } if *event_key == key));
+            pressed.0[index] |= edge;
+            controls.0[index] |= input.key_down(key) || edge;
+        }
+    });
 }
 fn toggle_fullscreen(ctx: &egui::Context, window: &config::WindowConfig) {
     let fullscreen = ctx.input(|i| i.viewport().fullscreen.unwrap_or(false));
@@ -223,20 +395,25 @@ impl eframe::App for App {
 
     fn update(&mut self, ctx: &egui::Context, _: &mut eframe::Frame) {
         while let Some(request) = self.web.try_recv() {
-            let result = if self.player.active() {
-                Err("Playback is already active".into())
-            } else {
-                self.player
-                    .launch(&self.settings, std::ffi::OsStr::new(request.url.as_ref()))
+            let result = match request.command {
+                web::Command::Play(url) => self.play_url(&url, ctx),
+                web::Command::Action(action) => {
+                    if self.player.active() && self.player.is_embedded() {
+                        self.action(action, ctx);
+                        Ok(())
+                    } else {
+                        Err("Embedded playback is not active".into())
+                    }
+                }
             };
-            if result.is_ok() {
-                self.input.block();
-            }
             let _ = request.reply.send(result);
         }
 
         if let Some(result) = self.player.poll() {
             self.browser.refresh();
+            if self.panel == Some(menu::Panel::Menu) {
+                self.menu_selected = 0;
+            }
             if let Err(error) = result {
                 eprintln!("{error}");
                 self.browser.error = Some(error);
@@ -244,6 +421,26 @@ impl eframe::App for App {
             self.input.block();
             self.ensure_visible = true;
         }
+        let status = self.player.status();
+        if self.player.active()
+            && self.player.is_embedded()
+            && self.preferences.is_none()
+            && !status.loading
+        {
+            self.settings.config.audio.volume = status.volume.clamp(0.0, 100.0);
+            self.settings.config.audio.muted = status.muted;
+        }
+        self.web.publish(web::Status {
+            active: self.player.active(),
+            embedded: self.player.is_embedded(),
+            loading: status.loading,
+            paused: status.paused,
+            position: status.position,
+            duration: status.duration,
+            volume: status.volume,
+            muted: status.muted,
+            error: self.browser.error.is_some(),
+        });
         if self.player.active() && !self.player.is_embedded() {
             if ctx.input(|i| i.viewport().close_requested()) {
                 ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
@@ -255,24 +452,41 @@ impl eframe::App for App {
             });
             return;
         }
-        let mut controls = Controls(self.pads.state.lock().unwrap().controls);
-        let keys = [
-            egui::Key::ArrowUp,
-            egui::Key::ArrowDown,
-            egui::Key::Enter,
-            egui::Key::Escape,
-            egui::Key::R,
-            egui::Key::Q,
-            egui::Key::ArrowLeft,
-            egui::Key::ArrowRight,
-            egui::Key::Space,
-            egui::Key::F,
-        ];
-        ctx.input(|i| {
-            for (index, key) in keys.into_iter().enumerate() {
-                controls.0[index] |= i.key_down(key);
+        let mut state = self.pads.state.lock().unwrap();
+        let pressed = std::mem::take(&mut state.pressed_buttons);
+        let raw_buttons = std::array::from_fn(|index| state.buttons[index] || pressed[index]);
+        let directions = std::mem::take(&mut state.pressed_controls);
+        let mut controls = Controls::default();
+        let mut edges = Controls::default();
+        for (index, slot) in [0, 1, 6, 7].into_iter().enumerate() {
+            controls.0[slot] = state.controls[index] || directions[index];
+            edges.0[slot] = directions[index];
+        }
+        drop(state);
+        let bindings = self
+            .preferences
+            .as_ref()
+            .map_or(&self.settings.config.controls, |draft| &draft.controls);
+        for (slot, button) in [2, 3, 4, 5, 8, 9, 11].into_iter().zip(bindings.buttons) {
+            let index = config::ControllerButton::ALL
+                .iter()
+                .position(|b| *b == button)
+                .unwrap();
+            controls.0[slot] |= raw_buttons[index];
+            edges.0[slot] = pressed[index];
+        }
+        keyboard_controls(ctx, &mut controls, &mut edges);
+        if let Some(menu::Panel::Rebind(index)) = self.panel {
+            self.capture_binding(index, raw_buttons, ctx);
+            if self.player.active() {
+                self.paint_video(ctx);
+            } else {
+                egui::CentralPanel::default().show(ctx, |_| {});
             }
-        });
+            self.draw_panel(ctx);
+            ctx.request_repaint_after(Duration::from_millis(50));
+            return;
+        }
         // A cheap timer enables the neutral gate and repeat without rendering continuously when idle.
         if self.input.waiting_for_neutral() {
             ctx.request_repaint_after(Duration::from_millis(50));
@@ -280,40 +494,36 @@ impl eframe::App for App {
         if controls.0[0] || controls.0[1] {
             ctx.request_repaint_after(Duration::from_millis(16));
         }
-        let actions = self.input.update(controls, Instant::now());
-        if self.player.active() {
-            for action in actions {
-                match action {
-                    Action::Quit => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
-                    Action::Back => {
-                        self.playback_command(&["stop"]);
-                        self.input.block();
-                    }
-                    Action::Open | Action::PlayPause => self.playback_command(&["cycle", "pause"]),
-                    Action::SeekBackward => self.playback_command(&["seek", "-10", "relative"]),
-                    Action::SeekForward => self.playback_command(&["seek", "10", "relative"]),
-                    Action::Fullscreen => toggle_fullscreen(ctx, &self.settings.config.window),
-                    Action::Up => self.playback_command(&["add", "volume", "5"]),
-                    Action::Down => self.playback_command(&["add", "volume", "-5"]),
-                    Action::Refresh => {}
-                }
-            }
-            self.playback_ui(ctx);
-            return;
-        }
+        let actions = self
+            .input
+            .update_with_edges(controls, edges, Instant::now());
         for action in actions {
             self.action(action, ctx);
-            if self.player.active() {
-                ctx.request_repaint();
+            if self.input.waiting_for_neutral() {
                 break;
             }
         }
+        if self.panel.is_some() {
+            if self.player.active() {
+                self.paint_video(ctx);
+            } else {
+                egui::CentralPanel::default().show(ctx, |_| {});
+            }
+            self.draw_panel(ctx);
+            return;
+        }
         if self.player.active() {
+            self.playback_ui(ctx);
             return;
         }
         egui::TopBottomPanel::top("path").show(ctx, |ui| {
             ui.add_space(12.0);
-            ui.heading("Media Launcher");
+            ui.horizontal(|ui| {
+                ui.heading("Media Launcher");
+                if ui.button("Menu").clicked_by(egui::PointerButton::Primary) {
+                    self.action(Action::Menu, ctx);
+                }
+            });
             if self.browser.configured_root.is_none() {
                 ui.label("Waiting for media from your phone");
                 ui.label(format!(
@@ -334,8 +544,16 @@ impl eframe::App for App {
                     });
             }
             ui.separator();
-            ui.label("↑ ↓  Move    A / Enter  Open    B / Esc  Back");
-            ui.label("X / R  Refresh    Start / Q  Quit");
+            ui.label(format!(
+                "Up / Down: Move · {} / Enter: Open · {} / Esc: Back",
+                self.settings.config.controls.buttons[0].label(),
+                self.settings.config.controls.buttons[1].label()
+            ));
+            ui.label(format!(
+                "{} / R: Refresh · {} / M: Menu · Q: Quit",
+                self.settings.config.controls.buttons[2].label(),
+                self.settings.config.controls.buttons[3].label()
+            ));
         });
         egui::CentralPanel::default().show(ctx, |ui| {
             if let Some(error) = &self.pads.state.lock().unwrap().error {
@@ -343,7 +561,7 @@ impl eframe::App for App {
             }
             if let Some(error) = &self.browser.error {
                 ui.colored_label(egui::Color32::LIGHT_RED, error);
-                ui.label("A / Enter or X / R to retry · B / Esc to dismiss · Start / Q to quit");
+                ui.label("A / Enter or X / R to retry · B / Esc to dismiss · Start / M for menu");
             }
             if self.browser.entries.is_empty() {
                 if self.browser.configured_root.is_none() {
@@ -390,7 +608,7 @@ impl eframe::App for App {
                             } else {
                                 egui::Color32::from_gray(28)
                             });
-                        if ui.add_sized([ui.available_width(), 52.0], button).clicked() {
+                        if ui.add_sized([ui.available_width(), 52.0], button).clicked_by(egui::PointerButton::Primary) {
                             clicked = Some(index);
                         }
                     }
@@ -399,7 +617,7 @@ impl eframe::App for App {
             self.ensure_visible = false;
             if let Some(index) = clicked {
                 self.browser.select(index);
-                self.action(Action::Open, ctx);
+                self.action(Action::Confirm, ctx);
             }
         });
     }
@@ -466,5 +684,31 @@ mod window_tests {
         assert_eq!(options.viewport.inner_size, Some(window.size.into()));
         assert_eq!(options.viewport.decorations, Some(true));
         assert_eq!(options.viewport.resizable, Some(true));
+    }
+    #[test]
+    fn keyboard_taps_between_frames_are_not_lost() {
+        let context = egui::Context::default();
+        let mut controls = Controls::default();
+        let mut edges = Controls::default();
+        let events = [true, false]
+            .into_iter()
+            .map(|pressed| egui::Event::Key {
+                key: egui::Key::Escape,
+                physical_key: None,
+                pressed,
+                repeat: false,
+                modifiers: Default::default(),
+            })
+            .collect();
+        let _ = context.run(
+            egui::RawInput {
+                events,
+                ..Default::default()
+            },
+            |ctx| {
+                keyboard_controls(ctx, &mut controls, &mut edges);
+            },
+        );
+        assert!(controls.0[3]);
     }
 }

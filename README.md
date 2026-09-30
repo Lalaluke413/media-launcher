@@ -29,7 +29,8 @@ For separate-window playback, install mpv and select
 explanation in the app; it does not silently switch backends. Persistent player and extractor
 settings, browser cookies, and plugin directories are described in
 [configuration and customization](docs/configuration.md). Existing mpv
-configuration and resume behavior remain in charge.
+customization and resume behavior are preserved; application audio preferences
+control volume and mute in embedded playback.
 
 ```sh
 cargo build --locked --release
@@ -95,7 +96,10 @@ on the same network and submit an HTTP or HTTPS media URL. Allow the application
 through your firewall on the local network if needed. Only one playback can run
 at a time. Use `--listen 127.0.0.1:8765` for access from this computer only, or
 `--listen IP:PORT` to choose another interface or port. The current endpoint has
-no authentication and is intended for a trusted local network.
+no authentication and is intended for a trusted local network. The phone page
+also shows playback status and provides pause, seek, volume, mute, and stop
+controls for embedded playback. Those commands use the same application actions
+as local controls and work while the TV menu is open.
 
 ## Browsing and controls
 
@@ -111,7 +115,7 @@ from display names.
 | A / south | Enter | Open folder / play; retry error |
 | B / east | Escape | Parent folder / dismiss error |
 | X / west | R | Refresh / retry |
-| Start / menu | Q | Quit |
+| Start / menu | M | Open application menu |
 
 The stick dead zone is 0.35; repeat starts after 350 ms and repeats every 100 ms.
 Controllers can reconnect. Selection and scroll are remembered per directory
@@ -126,15 +130,32 @@ Embedded playback controls:
 | B / east | Escape | Stop and return to launcher |
 | D-pad / left stick left/right | Left / Right | Seek −10 / +10 seconds per press |
 | D-pad / left stick up/down | Up / Down | Volume up/down |
-| Start / menu | Q | Exit application |
-| — | F | Toggle application fullscreen (also works in the browser) |
+| Start / menu | M | Open playback menu |
+| Y / north | Space | Play/pause (also available while a menu is open) |
+| Right stick click | V | Mute/unmute |
+| Select / view | F | Toggle application fullscreen |
+| — | Q | Exit application |
 
 On-screen buttons support mouse input. EOF and playback errors return to the
 launcher with directory selection preserved. Back honors mpv's
 `save-position-on-quit` preference by writing its watch-later state before stop.
 Window closing during embedded playback shuts down the renderer/player cleanly.
 After playback and at startup, controls must be neutral for 200 ms before new
-presses are accepted. Controller remapping and richer player menus are later work.
+presses are accepted. Start opens a minimal menu containing Resume, Settings,
+Stop playback, and Exit application. Opening the menu does not pause playback;
+Back closes it. On the launcher, the same menu provides Settings and Exit.
+
+Settings support controller navigation: up/down selects a row, left/right changes
+values, and Confirm activates it. Window mode, UI scale, volume, and mute preview
+immediately. Save persists these preferences; Cancel restores the previous values.
+Controller button assignments can be changed or reset to defaults. Reusing a
+button swaps assignments so every action stays reachable. Escape or physical B
+cancels button capture. Directional navigation and keyboard bindings remain fixed.
+
+Saving preserves advanced configuration values and original relative paths; CLI
+path overrides are not written back. It reformats TOML and preserves the original
+annotated file as `config.toml.bak` on the first save. Executable, cookie, and plugin
+settings remain available through TOML.
 
 With **external** playback, launcher actions and close requests remain disabled
 until mpv exits, and its own bindings handle playback. The separate mpv window

@@ -175,7 +175,15 @@ impl eframe::App for Smoke {
         egui::CentralPanel::default()
             .frame(egui::Frame::NONE)
             .show(ctx, |ui| {
+                // A host's active clipping must not leak into libmpv's smaller
+                // intermediate video passes. The player owns the full target.
+                let clip = ui.clip_rect();
+                ui.set_clip_rect(egui::Rect::from_min_max(
+                    clip.min + egui::vec2(100.0, 100.0),
+                    clip.max,
+                ));
                 self.player.paint(ui);
+                ui.set_clip_rect(clip);
                 ui.painter().rect_filled(
                     egui::Rect::from_min_size(egui::pos2(10.0, 10.0), egui::vec2(15.0, 15.0)),
                     0.0,

@@ -1,3 +1,50 @@
+# Unified controller experience — 2026-09-30
+
+Stage 4 adds shared application actions for keyboard/controller, mouse controls,
+and phone playback commands; a minimal application/playback menu; previewable
+settings with explicit Save/Cancel; and physical button remapping with reset.
+Start now opens Menu instead of exiting. Q and the menu's Exit item quit.
+
+## Passed
+
+- `cargo test --locked --offline`: **25 passed**, two native tests ignored.
+  New checks cover preference saving without writing CLI paths/resolved defaults
+  back, advanced configuration preservation, button assignment swapping,
+  HTTP fragmentation/length limits and command whitelisting, and quick keyboard
+  presses/represses between frames.
+- Linux and Windows GNU target Clippy with warnings denied: clean.
+- `cargo build --locked --offline`, formatting and diff whitespace checks: clean.
+- Native libmpv rendering/extractor regression test: **1 passed**, including a
+  host clip rectangle that must not leak into libmpv's intermediate GL passes.
+  The render callback disables egui's blend/scissor tests as required by
+  libmpv's render_gl contract; egui restores its state after the callback.
+- An isolated native-app smoke run with temporary media/config/data verified
+  keyboard menu navigation, settings preview/cancel/save, phone pause/seek/
+  volume/mute/stop, audio preferences surviving replay, Back returning to the
+  browser, and exit through the menu. A captured video pixel verified that video
+  remains visible behind the playback menu; menu/settings layouts were inspected.
+  No real audio, physical controller, Steam, or external streaming site was used.
+
+## User hardware checks
+
+- Rebuild/reinstall Windows with the existing bundle script (`-Installer`).
+- From Steam, use the controller to open media, pause/seek/change volume, open
+  Menu, enter Settings, preview/cancel and save preferences, stop playback,
+  return to the launcher and exit to Steam.
+- Rebind a button, check the resulting swap, cancel capture with physical B,
+  reset mappings, and verify saved settings after restarting.
+- Use the phone page during playback and while a menu is open. Settings navigation
+  stays on the TV; the phone controls playback and submits URLs.
+- Confirm window-mode and UI-scale previews on Windows and the actual TV.
+
+The user has already verified the Stage 3 Windows bundle, installation, Steam
+launch, and fullscreen fix, plus Arch package installation. Stage 4's updated
+Windows and physical-controller behavior still needs verification. The external
+backend retains mpv's own input/audio controls. Extractor/cookie/path settings
+remain in TOML. No CI, automatic updater, or visual redesign was added.
+
+---
+
 # Packaging first attempt — 2026-09-29
 
 Windows follow-up: the user reported a successful MSVC release build, followed

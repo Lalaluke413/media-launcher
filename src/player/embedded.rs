@@ -129,6 +129,8 @@ impl Embedded {
         }
         for (name, format) in [
             (c"pause", 3),
+            (c"volume", 5),
+            (c"mute", 3),
             (c"time-pos", 5),
             (c"duration", 5),
             (c"options/save-position-on-quit", 3),
@@ -274,6 +276,8 @@ impl Embedded {
         )?;
         self.status = PlaybackStatus {
             loading: true,
+            volume: self.status.volume,
+            muted: self.status.muted,
             ..Default::default()
         };
         self.active = true;
@@ -287,7 +291,11 @@ impl Embedded {
         if let Some(error) = self.render_error.take() {
             let _ = self.command(&["stop"]);
             self.active = false;
-            self.status = PlaybackStatus::default();
+            self.status = PlaybackStatus {
+                volume: self.status.volume,
+                muted: self.status.muted,
+                ..Default::default()
+            };
             return Some(Err(format!("{error}. Log: {}", self.log.display())));
         }
         let mut finished = None;
@@ -329,6 +337,12 @@ impl Embedded {
                             (b"pause", 3) if !property.data.is_null() => {
                                 self.status.paused = *property.data.cast::<i32>() != 0
                             }
+                            (b"volume", 5) if !property.data.is_null() => {
+                                self.status.volume = *property.data.cast::<f64>();
+                            }
+                            (b"mute", 3) if !property.data.is_null() => {
+                                self.status.muted = *property.data.cast::<i32>() != 0;
+                            }
                             (b"time-pos", 5) if !property.data.is_null() => {
                                 self.status.position = Some(*property.data.cast::<f64>())
                             }
@@ -346,7 +360,11 @@ impl Embedded {
         }
         finished.map(|result| {
             self.active = false;
-            self.status = PlaybackStatus::default();
+            self.status = PlaybackStatus {
+                volume: self.status.volume,
+                muted: self.status.muted,
+                ..Default::default()
+            };
             if result.is_err() {
                 let _ = self.command(&["stop"]);
             }
@@ -376,6 +394,11 @@ impl Embedded {
         // SAFETY: eframe's context is current in its paint callback. The target is
         // the whole window framebuffer, and UI overlays are painted afterwards.
         unsafe {
+            // egui enables these for its own meshes. libmpv's render_gl contract
+            // requires their default (disabled) state, including intermediate
+            // video passes. egui restores its painting state after this callback.
+            painter.gl().disable(glow::SCISSOR_TEST);
+            painter.gl().disable(glow::BLEND);
             (self.api.render_update)(self.render);
             let result = (self.api.render)(self.render, params.as_mut_ptr());
             painter

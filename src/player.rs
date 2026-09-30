@@ -16,6 +16,8 @@ use std::{
 pub struct PlaybackStatus {
     pub loading: bool,
     pub paused: bool,
+    pub volume: f64,
+    pub muted: bool,
     pub position: Option<f64>,
     pub duration: Option<f64>,
 }

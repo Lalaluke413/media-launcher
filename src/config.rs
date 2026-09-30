@@ -1,5 +1,5 @@
 use directories::BaseDirs;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::{
     ffi::OsString,
     fs::{self, OpenOptions},
@@ -30,6 +30,8 @@ pub struct Config {
     pub player: PlayerConfig,
     pub window: WindowConfig,
     pub yt_dlp: ExtractorConfig,
+    pub controls: ControllerConfig,
+    pub audio: AudioConfig,
 }
 impl Default for Config {
     fn default() -> Self {
@@ -40,6 +42,8 @@ impl Default for Config {
             player: PlayerConfig::default(),
             window: WindowConfig::default(),
             yt_dlp: ExtractorConfig::default(),
+            controls: ControllerConfig::default(),
+            audio: AudioConfig::default(),
         }
     }
 }
@@ -63,14 +67,14 @@ impl Default for PlayerConfig {
         }
     }
 }
-#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum PlayerBackend {
     #[default]
     Embedded,
     External,
 }
-#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum WindowMode {
     #[default]
@@ -96,6 +100,77 @@ impl Default for WindowConfig {
         }
     }
 }
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ControllerButton {
+    South,
+    East,
+    West,
+    North,
+    Start,
+    Select,
+    LeftShoulder,
+    RightShoulder,
+    LeftThumb,
+    RightThumb,
+}
+impl ControllerButton {
+    pub const ALL: [Self; 10] = [
+        Self::South,
+        Self::East,
+        Self::West,
+        Self::North,
+        Self::Start,
+        Self::Select,
+        Self::LeftShoulder,
+        Self::RightShoulder,
+        Self::LeftThumb,
+        Self::RightThumb,
+    ];
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::South => "South (A)",
+            Self::East => "East (B)",
+            Self::West => "West (X)",
+            Self::North => "North (Y)",
+            Self::Start => "Start / Menu",
+            Self::Select => "Select / View",
+            Self::LeftShoulder => "Left shoulder",
+            Self::RightShoulder => "Right shoulder",
+            Self::LeftThumb => "Left stick click",
+            Self::RightThumb => "Right stick click",
+        }
+    }
+}
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct ControllerConfig {
+    // Confirm, Back, Refresh, Menu, Play/pause, Fullscreen, Mute.
+    pub buttons: [ControllerButton; 7],
+}
+impl Default for ControllerConfig {
+    fn default() -> Self {
+        use ControllerButton::*;
+        Self {
+            buttons: [South, East, West, Start, North, Select, RightThumb],
+        }
+    }
+}
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct AudioConfig {
+    pub volume: f64,
+    pub muted: bool,
+}
+impl Default for AudioConfig {
+    fn default() -> Self {
+        Self {
+            volume: 100.0,
+            muted: false,
+        }
+    }
+}
+
 #[derive(Debug, Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct ExtractorConfig {
@@ -112,6 +187,73 @@ pub struct Settings {
     pub data_dir: PathBuf,
 }
 impl Settings {
+    /// Read the original file so resolved paths and CLI overrides aren't written
+    /// back. Only preferences explicitly edited in the settings screen change.
+    pub fn save_preferences(
+        &self,
+        mode: WindowMode,
+        scale: f32,
+        audio: &AudioConfig,
+        controls: &ControllerConfig,
+    ) -> Result<(), String> {
+        let original = fs::read_to_string(&self.config_path).map_err(|e| e.to_string())?;
+        let mut document: toml::Value = toml::from_str(&original).map_err(|e| e.to_string())?;
+        let table = document
+            .as_table_mut()
+            .ok_or("Configuration must be a table")?;
+        table.insert("ui_scale".into(), toml::Value::Float(scale as f64));
+        let window = table
+            .entry("window")
+            .or_insert_with(|| toml::Value::Table(Default::default()));
+        window
+            .as_table_mut()
+            .ok_or("window must be a table")?
+            .insert(
+                "mode".into(),
+                toml::Value::try_from(mode).map_err(|e| e.to_string())?,
+            );
+        table.insert(
+            "audio".into(),
+            toml::Value::try_from(audio).map_err(|e| e.to_string())?,
+        );
+        table.insert(
+            "controls".into(),
+            toml::Value::try_from(controls).map_err(|e| e.to_string())?,
+        );
+        let text = toml::to_string_pretty(&document).map_err(|e| e.to_string())?;
+        // Keep the original annotated file on the first save; TOML serialization
+        // preserves values but does not preserve comments or formatting.
+        let backup = self.config_path.with_extension("toml.bak");
+        if !backup.exists() {
+            let mut options = OpenOptions::new();
+            options.write(true).create_new(true);
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::OpenOptionsExt;
+                options.mode(0o600);
+            }
+            match options.open(&backup) {
+                Ok(mut file) => file
+                    .write_all(original.as_bytes())
+                    .map_err(|e| e.to_string())?,
+                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
+                Err(e) => return Err(e.to_string()),
+            }
+        }
+        let parent = self
+            .config_path
+            .parent()
+            .ok_or("Config path has no parent")?;
+        let mut temporary = tempfile::NamedTempFile::new_in(parent).map_err(|e| e.to_string())?;
+        temporary
+            .write_all(text.as_bytes())
+            .map_err(|e| e.to_string())?;
+        temporary.as_file().sync_all().map_err(|e| e.to_string())?;
+        temporary
+            .persist(&self.config_path)
+            .map_err(|e| e.to_string())?;
+        Ok(())
+    }
     pub fn plugin_dir(&self) -> PathBuf {
         self.data_dir.join("yt-dlp/plugins")
     }
@@ -378,6 +520,14 @@ fn read_settings(
     {
         return Err("Root and plugin directories must not be empty".into());
     }
+    if !config.audio.volume.is_finite() || !(0.0..=100.0).contains(&config.audio.volume) {
+        return Err("audio.volume must be between 0 and 100".into());
+    }
+    for (index, button) in config.controls.buttons.iter().enumerate() {
+        if config.controls.buttons[..index].contains(button) {
+            return Err("controls.buttons must contain distinct controller buttons".into());
+        }
+    }
     config.root = overrides
         .root
         .map(|p| absolute(&p, cwd))
@@ -641,6 +791,9 @@ mod tests {
         for text in [
             "ui_scale = nan",
             "ui_scale = 4.1",
+            "[audio]\nvolume = nan",
+            "[audio]\nvolume = 101",
+            "[controls]\nbuttons = ['south', 'east', 'west', 'start', 'north', 'select', 'south']",
             "root = ''",
             "listen = 'bad'",
             "[player]\nexecutable = ''",
@@ -704,5 +857,50 @@ mod tests {
         assert!(config.contains("雪'\"'\"'s"));
         assert!(config.contains("'--cookies-from-browser' 'firefox:My Profile'"));
         assert_eq!(config.matches("'--config-locations'").count(), 2);
+    }
+    #[test]
+    fn preference_save_preserves_original_paths_and_advanced_values() {
+        let dir = tempfile::tempdir().unwrap();
+        let original = "# keep an annotated backup\nroot = 'videos'\n[window]\nsize = [900, 600]\n[yt_dlp]\nexecutable = './custom-extractor'\nargs = ['--extractor-args', 'site:flag=yes']";
+        let settings = read(
+            dir.path(),
+            original,
+            &["--root", "other-videos", "--yt-dlp", "override"],
+        )
+        .unwrap();
+        settings
+            .save_preferences(
+                WindowMode::Windowed,
+                1.2,
+                &AudioConfig {
+                    volume: 35.0,
+                    muted: true,
+                },
+                &ControllerConfig::default(),
+            )
+            .unwrap();
+        let saved: Config =
+            toml::from_str(&fs::read_to_string(&settings.config_path).unwrap()).unwrap();
+        assert_eq!(saved.root, Some("videos".into()));
+        assert_eq!(saved.yt_dlp.executable, Some("./custom-extractor".into()));
+        assert_eq!(saved.yt_dlp.args, ["--extractor-args", "site:flag=yes"]);
+        assert_eq!(saved.window.size, [900.0, 600.0]);
+        assert_eq!(saved.window.mode, WindowMode::Windowed);
+        assert_eq!(saved.audio.volume, 35.0);
+        assert!(saved.audio.muted);
+        assert_eq!(
+            fs::read_to_string(settings.config_path.with_extension("toml.bak")).unwrap(),
+            original
+        );
+        // Saving a minimal existing config also creates missing preference tables.
+        let settings = read(dir.path(), "", &[]).unwrap();
+        settings
+            .save_preferences(
+                WindowMode::Fullscreen,
+                1.0,
+                &AudioConfig::default(),
+                &ControllerConfig::default(),
+            )
+            .unwrap();
     }
 }

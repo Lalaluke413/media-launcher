@@ -195,3 +195,41 @@ command-line paths resolve against the current working directory.
 Without a library root, the app shows a waiting screen and accepts phone URL
 submissions. With a root, it also shows the existing filesystem browser. Playback
 and customization use the same settings for local files and submitted URLs.
+
+## Controller-accessible settings
+
+Open Menu with Start or M and select Settings. Navigate with up/down, adjust
+window mode, UI scale, volume and mute with left/right, and Confirm to activate.
+Save persists preferences, while Cancel restores previews. Configuration is
+rewritten as TOML on Save; the first annotated version is backed up beside it as
+`config.toml.bak`. Existing advanced values and relative paths are preserved.
+CLI executable/root overrides and bundled dependency resolution are not saved.
+Saving a UI preference intentionally persists its current selected value, even
+if that preference initially came from a CLI override.
+
+```toml
+[audio]
+volume = 100 # 0-100, shared with playback and phone controls
+muted = false
+
+[controls]
+# Confirm, Back, Refresh, Menu, Play/pause, Fullscreen, Mute
+buttons = ['south', 'east', 'west', 'start', 'north', 'select', 'right_thumb']
+```
+
+Settings > Controller buttons captures physical buttons. Existing assignments
+swap rather than removing an action; Reset restores the defaults. Escape or
+physical B cancels capture. Physical B is reserved for cancellation during
+capture. Supported names are `south`, `east`, `west`, `north`, `start`, `select`,
+`left_shoulder`, `right_shoulder`, `left_thumb`, and `right_thumb`. The seven
+assignments must be distinct. Stick/D-pad navigation stays fixed, as do keyboard
+bindings: Enter confirms, Escape backs out, M opens the menu, Space pauses,
+F toggles fullscreen, V mutes, and Q exits. Ordinary playback volume changes
+apply for the session; use Save settings to persist the current volume/mute.
+The external backend continues using mpv's own audio and playback controls.
+
+The phone interface polls `/status` and sends whitelisted commands to
+`POST /control`: `pause`, `stop`, `seek_back`, `seek_forward`, `volume_down`,
+`volume_up`, and `mute`, as a URL-encoded `action` field. URL submissions still
+use `POST /play` with a `url` field. These endpoints retain the existing trusted
+LAN-only usage expectation; the phone cannot navigate settings or quit the app.

@@ -34,3 +34,13 @@ plugin_dirs = []
 # Each entry is one argument. Repeated options are supported.
 # args = ['--extractor-args', 'youtube:player_client=default']
 args = []
+
+[audio]
+# Application-owned audio preferences; volume is limited to 0-100.
+volume = 100
+muted = false
+
+[controls]
+# Confirm, Back, Refresh, Menu, Play/pause, Fullscreen, Mute (in this order).
+# Names describe physical positions; each assignment must be distinct.
+buttons = ['south', 'east', 'west', 'start', 'north', 'select', 'right_thumb']

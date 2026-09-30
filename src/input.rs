@@ -4,19 +4,24 @@ use std::time::{Duration, Instant};
 pub enum Action {
     Up,
     Down,
-    Open,
+    Confirm,
     Back,
     Refresh,
+    Menu,
     Quit,
-    SeekBackward,
-    SeekForward,
+    Mute,
+    Stop,
+    Seek(i32),
+    Volume(i32),
+    Left,
+    Right,
     PlayPause,
     Fullscreen,
 }
 
 /// Snapshot of controls, combining keyboard and all connected gamepads.
 #[derive(Default, Clone, Copy)]
-pub struct Controls(pub [bool; 10]);
+pub struct Controls(pub [bool; 12]);
 
 pub struct Input {
     previous: Controls,
@@ -43,7 +48,16 @@ impl Input {
         self.neutral_since = None;
         self.direction = None;
     }
+    #[cfg(test)]
     pub fn update(&mut self, controls: Controls, now: Instant) -> Vec<Action> {
+        self.update_with_edges(controls, Controls::default(), now)
+    }
+    pub fn update_with_edges(
+        &mut self,
+        controls: Controls,
+        pressed: Controls,
+        now: Instant,
+    ) -> Vec<Action> {
         if self.blocked {
             if controls.0.iter().any(|v| *v) {
                 self.neutral_since = None;
@@ -58,18 +72,20 @@ impl Input {
         let actions = [
             Action::Up,
             Action::Down,
-            Action::Open,
+            Action::Confirm,
             Action::Back,
             Action::Refresh,
-            Action::Quit,
-            Action::SeekBackward,
-            Action::SeekForward,
+            Action::Menu,
+            Action::Left,
+            Action::Right,
             Action::PlayPause,
             Action::Fullscreen,
+            Action::Quit,
+            Action::Mute,
         ];
         let mut result = vec![];
         for (i, action) in actions.iter().enumerate().skip(2) {
-            if controls.0[i] && !self.previous.0[i] {
+            if pressed.0[i] || (controls.0[i] && !self.previous.0[i]) {
                 result.push(*action);
             }
         }
@@ -79,7 +95,7 @@ impl Input {
             _ => None,
         };
         if let Some(i) = direction {
-            if self.direction != direction {
+            if self.direction != direction || pressed.0[i] {
                 result.push(actions[i]);
                 self.repeat_at = now + Duration::from_millis(350);
             } else if now >= self.repeat_at {
@@ -103,11 +119,11 @@ mod tests {
         input.update(Controls::default(), t);
         input.update(Controls::default(), t + Duration::from_millis(201));
         let controls = Controls([
-            false, false, false, true, true, true, false, false, false, false,
+            false, false, false, true, true, true, false, false, false, false, false, false,
         ]);
         assert_eq!(
             input.update(controls, t + Duration::from_millis(210)),
-            vec![Action::Back, Action::Refresh, Action::Quit]
+            vec![Action::Back, Action::Refresh, Action::Menu]
         );
         assert!(
             input
@@ -115,7 +131,7 @@ mod tests {
                 .is_empty()
         );
         let up = Controls([
-            true, false, false, false, false, false, false, false, false, false,
+            true, false, false, false, false, false, false, false, false, false, false, false,
         ]);
         assert_eq!(
             input.update(up, t + Duration::from_secs(2)),
@@ -138,7 +154,7 @@ mod tests {
         let t = Instant::now();
         let mut input = Input::new(t);
         let held = Controls([
-            false, false, false, false, false, false, true, true, true, true,
+            false, false, false, false, false, false, true, true, true, true, false, false,
         ]);
         assert!(input.update(held, t).is_empty());
         assert!(input.update(held, t + Duration::from_secs(1)).is_empty());
@@ -147,8 +163,8 @@ mod tests {
         assert_eq!(
             input.update(held, t + Duration::from_millis(2210)),
             vec![
-                Action::SeekBackward,
-                Action::SeekForward,
+                Action::Left,
+                Action::Right,
                 Action::PlayPause,
                 Action::Fullscreen
             ]
@@ -162,11 +178,11 @@ mod tests {
         input.update(Controls::default(), t);
         input.update(Controls::default(), t + Duration::from_millis(201));
         let held = Controls([
-            false, true, true, false, false, false, false, false, false, false,
+            false, true, true, false, false, false, false, false, false, false, false, false,
         ]);
         assert_eq!(
             input.update(held, t + Duration::from_millis(210)),
-            vec![Action::Open, Action::Down]
+            vec![Action::Confirm, Action::Down]
         );
         assert!(
             input
@@ -193,7 +209,29 @@ mod tests {
         input.update(Controls::default(), t + Duration::from_millis(4201));
         assert_eq!(
             input.update(held, t + Duration::from_millis(4210)),
-            vec![Action::Open, Action::Down]
+            vec![Action::Confirm, Action::Down]
+        );
+    }
+    #[test]
+    fn fresh_edges_survive_a_release_and_repress_between_frames() {
+        let now = Instant::now();
+        let mut input = Input::new(now);
+        input.update(Controls::default(), now);
+        input.update(Controls::default(), now + Duration::from_millis(201));
+        let mut held = Controls::default();
+        held.0[2] = true;
+        assert_eq!(
+            input.update(held, now + Duration::from_millis(210)),
+            [Action::Confirm]
+        );
+        assert!(
+            input
+                .update(held, now + Duration::from_millis(250))
+                .is_empty()
+        );
+        assert_eq!(
+            input.update_with_edges(held, held, now + Duration::from_millis(300)),
+            [Action::Confirm]
         );
     }
 }

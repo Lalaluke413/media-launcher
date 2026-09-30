@@ -1,7 +1,7 @@
 # First source package; local build instructions are in README.md.
 # This tracks Git until a versioned source release is published.
 pkgname=media-launcher-git
-pkgver=0.1.0
+pkgver=0.1.0.r10.g3ae0d7d
 pkgrel=1
 pkgdesc='Controller-operated mpv frontend for local videos and phone-submitted URLs'
 arch=('x86_64')

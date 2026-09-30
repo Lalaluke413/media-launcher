@@ -1,6 +1,7 @@
 /target
 /dist/
 /packaging/arch/src/
+/packaging/arch/media-launcher/
 /packaging/arch/pkg/
 /packaging/arch/*.pkg.tar.*
 /packaging/arch/*.log
