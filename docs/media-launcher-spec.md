@@ -1,4 +1,9 @@
-# Minimal controller-operated video launcher — v0.1
+# Minimal controller-operated video launcher — v0.1 (historical)
+
+This document records the original single-machine requirements. Current build
+and installation instructions are in [README.md](../README.md). Nix packaging
+and machine-specific defaults have been removed; Windows and Linux are now the
+intended platforms. The original scope below is retained as historical context.
 
 ## Goal
 

@@ -1,81 +1,89 @@
-# media-launcher
+# Media Launcher
 
-A fullscreen folder browser for a controller and your existing mpv. No database,
-indexing, metadata, or network access. Lists immediate folders and videos, with
-folders first. Hidden names, broken symlinks, and symlinks outside the library
-root are omitted. Supported extensions (case-insensitive): `mp4 mkv m4v webm avi
-mov ts m2ts`. Filenames and native filesystem paths are retained independently.
+A fullscreen, controller-operated folder browser that plays local videos and
+phone-submitted URLs through your existing mpv installation. Windows and Linux
+are the intended platforms. Playback currently opens a separate mpv window;
+bundled dependencies and embedded playback are planned, not implemented.
 
 ## Build and run
 
-```sh
-nix-build
-./result/bin/media-launcher
+Install Rust 1.88 or newer with Cargo and a native C/C++ linker. On Windows,
+use the MSVC Rust toolchain and Visual Studio Build Tools with the desktop C++
+workload and Windows SDK. On Linux, install pkg-config and libudev development
+files, plus your desktop's Wayland/X11, libxkbcommon, and OpenGL/EGL libraries.
+The application supports both Wayland and X11. Cargo.lock pins Rust dependencies.
 
-# Development (uses the same pinned nixpkgs):
-nix-shell
-cargo run --locked -- --root /srv/downloads/complete
+Install mpv separately for now. For web URLs, configure mpv with yt-dlp and any
+custom extractor plugins you use. Existing mpv configuration and resume behavior
+remain in charge.
+
+```sh
+cargo build --locked --release
+cargo run --locked -- --root /path/to/videos
 cargo test --locked
 cargo clippy --locked --all-targets -- -D warnings
+cargo fmt --check
 ```
 
-`nixpkgs.nix` pins both the revision and archive checksum. `Cargo.lock` pins Rust
-packages. Nix is not needed on other Linux distributions: install Rust >= 1.88,
-a C linker, pkg-config, libudev development files, Wayland, libxkbcommon, OpenGL/
-EGL, and X11 libraries, then run `cargo build --locked --release`.
+The release executable is `target/release/media-launcher` on Linux and
+`target\release\media-launcher.exe` on Windows. Copy it to a stable location,
+or install it on PATH with `cargo install --locked --path .`.
+
+Linux example:
 
 ```sh
-media-launcher --root /srv/downloads/complete \
-  --mpv /run/current-system/sw/bin/mpv --ui-scale 1.5
+media-launcher --root "$HOME/Videos" --mpv mpv --ui-scale 1.5
 ```
 
-Defaults: root `/srv/downloads/complete`, mpv
-`/run/current-system/sw/bin/mpv`, UI scale `1.0`. Scale accepts `0.5`–`4.0` and
-multiplies the desktop's display scale. Body text is 30 logical pixels; try `1.5`
-or `2` on a 4K TV with desktop scaling disabled. Relative roots are accepted.
-`--mpv` accepts an executable path or a command found in PATH. No mpv package is
-installed or substituted; its existing user configuration and resume behavior
-remain in charge. Run `media-launcher --help` for syntax.
+Windows PowerShell example (using explicit paths):
 
-## NixOS installation
-
-Keep this project at a stable path, then add to your existing configuration:
-
-```nix
-{ ... }: {
-  environment.systemPackages = [
-    (import /path/to/media-launcher/default.nix { })
-  ];
-}
+```powershell
+.\target\release\media-launcher.exe --root "$env:USERPROFILE\Videos" --mpv "C:\Tools\mpv\mpv.exe" --ui-scale 1.5
 ```
 
-This uses the project's pinned package set even if your system uses another
-revision. To intentionally build against your system's package set instead, use
-`import /path/to/media-launcher/default.nix { inherit pkgs; }` in a module with a
-`pkgs` argument. That overrides the project's nixpkgs pin.
+Defaults: library root is the **current working directory**, player is `mpv`
+found on PATH, UI scale is `1.0`, and the web server listens on `0.0.0.0:8765`.
+Relative roots are accepted. `--mpv` accepts an executable path or a command on
+PATH. `--ui-scale` accepts `0.5`–`4.0` and multiplies desktop display scaling.
+Run `media-launcher --help` for syntax.
 
-Apply your configuration using your normal NixOS workflow. The installed
-executable is `/run/current-system/sw/bin/media-launcher`; the desktop entry is
-**Videos**. Keep your customized mpv installed at its existing system path.
-Existing Wayland, NVIDIA drivers, Steam, and filesystem permissions are used
-as-is. Nothing in this repository modifies system configuration or permissions.
+On Linux, an optional desktop entry is provided in
+[packaging/media-launcher.desktop](packaging/media-launcher.desktop). Copy it to
+`~/.local/share/applications/` after installing the executable on PATH. Its
+working directory depends on the desktop; specify an absolute `--root` in its
+`Exec` line to select your library reliably.
 
 ## Steam Big Picture
 
-1. In desktop Steam choose **Games → Add a Non-Steam Game to My Library**.
-2. Choose **Videos**, or browse to `/run/current-system/sw/bin/media-launcher`.
-3. Open shortcut **Properties → Shortcut**. Set:
-   - Name: `Videos`
-   - Target: `/run/current-system/sw/bin/media-launcher`
-   - Start In: `/srv/downloads/complete`
-   - Launch Options: `--root /srv/downloads/complete --mpv /run/current-system/sw/bin/mpv --ui-scale 1.5`
-4. Under **Properties → Controller**, set the override to **Disable Steam Input**.
-5. Launch **Videos** in Big Picture. Leave compatibility/Proton disabled.
+1. Add the installed executable as a non-Steam game in desktop Steam.
+2. Name the shortcut **Media Launcher** and set **Start In** to the executable's
+   containing directory.
+3. Set **Launch Options** to `--root "PATH TO VIDEOS" --mpv "PATH TO MPV" --ui-scale 1.5`,
+   substituting absolute paths for your platform. An explicit mpv path avoids
+   depending on Steam's PATH. Adjust scaling for your TV.
+4. Disable Steam Input for this shortcut to use native controller input.
+5. On Linux, launch the native executable with compatibility/Proton disabled.
 
-Adjust only the scale and paths as needed. The launcher stays alive throughout
-playback so Steam tracks the whole session.
+The launcher stays alive during playback so Steam tracks the whole session.
+The separate mpv installation must also support your controller bindings;
+launcher-owned playback controls will arrive with embedded playback.
 
-## Controls
+## Phone URL submission
+
+While the launcher is running, open `http://COMPUTER-LAN-IP:8765/` on a phone
+on the same network and submit an HTTP or HTTPS media URL. Allow the application
+through your firewall on the local network if needed. Only one playback can run
+at a time. Use `--listen 127.0.0.1:8765` for access from this computer only, or
+`--listen IP:PORT` to choose another interface or port. The current endpoint has
+no authentication and is intended for a trusted local network.
+
+## Browsing and controls
+
+Lists immediate folders and videos, with folders first. No database, indexing,
+or metadata fetching. Dot-prefixed names, broken symlinks, and symlinks outside
+the library root are omitted. Supported extensions, case-insensitively:
+`mp4 mkv m4v webm avi mov ts m2ts`. Native filesystem paths are retained separately
+from display names.
 
 | Controller (physical position) | Keyboard | Action |
 | --- | --- | --- |
@@ -86,60 +94,35 @@ playback so Steam tracks the whole session.
 | Start / menu | Q | Quit |
 
 The stick dead zone is 0.35; repeat starts after 350 ms and repeats every 100 ms.
-Controllers can disconnect and reconnect. Selection and scroll are remembered
-per directory for this session. Refresh preserves the selected path, or falls
-back to the nearest valid row. Back at root does nothing. Selected names wrap
-in the footer (scrollable for exceptionally long names).
+Controllers can reconnect. Selection and scroll are remembered per directory
+for the session; refresh preserves the selected path where possible. Back at
+root does nothing. The selected name wraps in the footer.
 
-During playback **all launcher actions, including window-close requests, are
-disabled**. gilrs reads nonexclusively and continues draining events; it does not
-grab the controller. mpv receives the physical controller through its existing
-SDL bindings. After playback, controls must be neutral for 200 ms before new
-presses are accepted. This also applies at launcher startup. No focus requests,
-minimize/unminimize commands, or compositor-specific graphics workarounds are
-issued: the fullscreen browser remains underneath mpv.
-
-The UI sleeps when idle; a small input thread polls for gamepads every 8 ms and
-wakes the UI on state changes. Holding a direction requests 60 Hz updates.
-Playback is checked every 100 ms without blocking the UI.
+During playback, launcher actions and window-close requests are disabled.
+mpv owns playback input. After playback and at startup, controls must be neutral
+for 200 ms before new presses are accepted. The launcher remains underneath mpv;
+no compositor-specific focus requests are issued. It sleeps when idle and checks
+playback without blocking the UI.
 
 ## Errors and diagnostics
 
-Missing roots, unreadable directories, removed files, failed spawns, and failed
-player exits leave the browser usable. Retry with X, dismiss with B, then B again
-to go back. Directory-entry errors are logged and skipped. The application never
-changes ownership or access permissions.
+Unavailable directories, removed files, failed spawns, and failed player exits
+leave the browser usable. Retry with X, dismiss with B, then B again to go back.
+The application does not change media ownership or permissions.
 
-Each playback writes stdout/stderr to a private regular file named
-`$TMPDIR/media-launcher-<pid>-<timestamp>.log` (normally `/tmp`). Its path is printed
-to the launcher's stderr and shown on unsuccessful exit. Output is not piped, so
-an undrained pipe cannot stall mpv. These temporary diagnostics are not watched
-state; remove old logs when no longer needed. Launcher diagnostics go to stderr.
+Each playback writes stdout/stderr to a new file named
+`media-launcher-<pid>-<timestamp>.log` in the operating system's temporary
+directory. Unix logs are created with mode `0600`; Windows logs inherit the
+temporary directory's access permissions. The log path appears on stderr and
+in unsuccessful-exit errors. Launcher diagnostics also go to stderr.
 
-## Validation status
+## Validation
 
-Automated checks cover filtering and sorting, native/non-UTF-8 and unusual paths,
-symlink confinement, directory history, selection recovery, missing roots and
-removed files, directional repeat, one-shot actions, playback neutral gating,
-argument-vector launching, single-child enforcement, and failed/successful
-player exits. See [validation notes](docs/validation.md) for actual results.
+See [validation notes](docs/validation.md) for checks actually performed and
+remaining hardware checks. Windows runtime behavior and Steam/controller
+acceptance require testing on Windows; Linux Wayland/Steam/controller behavior
+also requires real hardware validation.
 
-**Target-machine acceptance is still required.** This project was implemented
-on Arch/X11 without Nix, a test controller, or the target Steam/Wayland setup.
-In particular, fullscreen stacking and restoration depend on the compositor;
-they are not claimed to be validated here. On your NixOS machine:
-
-- Record `nixos-version`, `$XDG_CURRENT_DESKTOP`, `$XDG_SESSION_TYPE`, the controller
-  model, and the customized mpv version.
-- Build with `nix-build`, launch through Steam, and use only the controller for
-  folder → video → return → second video → return → quit, several times.
-- Hold B/stick while exiting mpv: the browser must stay at its original location
-  until neutral and a new press. Test Start during playback too.
-- Check 4K couch readability, long-name scrolling, empty/unreadable folders,
-  refresh after adding/removing a file, and controller reconnection.
-- Check mpv opens above the browser and closing it restores a usable browser.
-  If your compositor behaves differently, record that behavior before choosing
-  a compositor-specific window rule or another handoff strategy.
-
-Dependency references: [eframe 0.33.2 Wayland/GL features](https://docs.rs/crate/eframe/0.33.2/features),
-[gilrs input and hotplug API](https://docs.rs/gilrs/0.11.2/gilrs/struct.Gilrs.html).
+The [original v0.1 spec](docs/media-launcher-spec.md) records the historical
+single-machine design. Its Nix packaging and machine-specific paths no longer
+apply to the current project.

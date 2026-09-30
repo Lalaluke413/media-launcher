@@ -25,8 +25,8 @@ struct Options {
 impl Options {
     fn parse() -> Result<Option<Self>, String> {
         let mut options = Self {
-            root: "/srv/downloads/complete".into(),
-            mpv: "/run/current-system/sw/bin/mpv".into(),
+            root: ".".into(),
+            mpv: "mpv".into(),
             scale: 1.0,
             listen: "0.0.0.0:8765".parse().unwrap(),
         };
@@ -34,7 +34,7 @@ impl Options {
         while let Some(arg) = args.next() {
             if arg == "--help" || arg == "-h" {
                 println!(
-                    "media-launcher [--root PATH] [--mpv EXECUTABLE] [--ui-scale NUMBER] [--listen ADDRESS]\nDefaults: /srv/downloads/complete, /run/current-system/sw/bin/mpv, 1.0, 0.0.0.0:8765\nUI scale must be between 0.5 and 4.0."
+                    "media-launcher [--root PATH] [--mpv EXECUTABLE] [--ui-scale NUMBER] [--listen ADDRESS]\nDefaults: current directory, mpv on PATH, 1.0, 0.0.0.0:8765\nUI scale must be between 0.5 and 4.0."
                 );
                 return Ok(None);
             }

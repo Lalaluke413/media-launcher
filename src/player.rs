@@ -1,7 +1,8 @@
+#[cfg(unix)]
+use std::os::unix::fs::OpenOptionsExt;
 use std::{
     ffi::OsStr,
     fs::OpenOptions,
-    os::unix::fs::OpenOptionsExt,
     process::{Child, Command, Stdio},
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -25,10 +26,11 @@ impl Player {
             .as_nanos();
         let log_path =
             std::env::temp_dir().join(format!("media-launcher-{}-{stamp}.log", std::process::id()));
-        let log = OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .mode(0o600)
+        let mut log_options = OpenOptions::new();
+        log_options.write(true).create_new(true);
+        #[cfg(unix)]
+        log_options.mode(0o600);
+        let log = log_options
             .open(&log_path)
             .map_err(|e| format!("Could not create playback log: {e}"))?;
         let stderr = log
@@ -73,7 +75,7 @@ impl Player {
         }
     }
 }
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod tests {
     use super::*;
     use std::{

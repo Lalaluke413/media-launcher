@@ -191,6 +191,7 @@ impl Browser {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(unix)]
     use std::os::unix::{ffi::OsStringExt, fs::symlink};
     #[test]
     fn discovery_is_literal_sorted_and_confined() {
@@ -199,7 +200,7 @@ mod tests {
         for name in [
             "z.MP4",
             "A.mkv",
-            "a.mkv",
+            "b.mkv",
             "雪 ' $().m2ts",
             "video.ts",
             ".hidden.mp4",
@@ -209,22 +210,32 @@ mod tests {
         }
         fs::create_dir(root.join("folder")).unwrap();
         fs::create_dir(root.join(".secret")).unwrap();
+        let entries = scan(&root, &root).unwrap();
+        assert_eq!(entries.len(), 6);
+        assert_eq!(entries[0].name, "folder");
+        assert_eq!(entries[1].name, "A.mkv");
+        assert_eq!(entries[2].name, "b.mkv");
+        let outside = tempfile::tempdir().unwrap();
+        assert!(scan(&root, outside.path()).is_err());
+    }
+    #[cfg(unix)]
+    #[test]
+    fn native_names_and_symlinks_are_confined() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().canonicalize().unwrap();
+        fs::write(root.join("z.MP4"), b"").unwrap();
         symlink(root.join("z.MP4"), root.join("alias.mp4")).unwrap();
         symlink("/", root.join("outside")).unwrap();
         symlink(root.join("missing"), root.join("broken.mp4")).unwrap();
         let invalid = OsString::from_vec(b"native\xff.mp4".to_vec());
         fs::write(root.join(&invalid), b"").unwrap();
         let entries = scan(&root, &root).unwrap();
-        assert_eq!(entries.len(), 8);
-        assert_eq!(entries[0].name, "folder");
-        assert_eq!(entries[1].name, "A.mkv");
-        assert_eq!(entries[2].name, "a.mkv");
+        assert_eq!(entries.len(), 3);
         assert!(entries.iter().any(|e| e.path == root.join(&invalid)));
-        assert!(scan(&root, Path::new("/")).is_err());
+        assert!(entries.iter().any(|e| e.name == "alias.mp4"));
     }
     #[test]
-    fn every_extension_is_visible_and_unreadable_directory_is_recoverable() {
-        use std::os::unix::fs::PermissionsExt;
+    fn every_extension_is_visible() {
         let temp = tempfile::tempdir().unwrap();
         for ext in ["mp4", "MKV", "m4v", "WEBM", "avi", "MOV", "ts", "M2TS"] {
             fs::write(temp.path().join(format!("video.{ext}")), b"").unwrap();
@@ -233,6 +244,13 @@ mod tests {
         assert_eq!(browser.entries.len(), 8);
         browser.select(usize::MAX);
         assert_eq!(browser.view.selected, 7);
+    }
+    #[cfg(unix)]
+    #[test]
+    fn unreadable_directory_is_recoverable() {
+        use std::os::unix::fs::PermissionsExt;
+        let temp = tempfile::tempdir().unwrap();
+        let mut browser = Browser::new(temp.path().to_owned());
         let denied = temp.path().join("denied");
         fs::create_dir(&denied).unwrap();
         fs::set_permissions(&denied, fs::Permissions::from_mode(0o000)).unwrap();
@@ -246,6 +264,7 @@ mod tests {
         }
         fs::set_permissions(&denied, fs::Permissions::from_mode(0o700)).unwrap();
     }
+    #[cfg(unix)]
     #[test]
     fn symlink_retargeted_after_listing_cannot_launch_outside_root() {
         let root = tempfile::tempdir().unwrap();

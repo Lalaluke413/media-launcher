@@ -1,6 +1,6 @@
 [Desktop Entry]
 Type=Application
-Name=Videos
+Name=Media Launcher
 Comment=Browse video folders and play with mpv
 Exec=media-launcher
 Icon=video-x-generic
