@@ -111,11 +111,14 @@ for that key is replaced; use `yt_dlp.args` to include those extra files.
 `window.mode` accepts `fullscreen` (the default), `windowed`, or `maximized`.
 `window.size` is the initial windowed size in logical pixels; both dimensions
 must be finite and between 320 and 16384. Desktop scaling applies independently
-of `ui_scale`. `decorations` and `resizable` default to `true`.
+of `ui_scale`. `decorations` and `resizable` default to `true`. Windowed startup
+requests a centered window. Fullscreen and maximized startup use the monitor's
+available dimensions, without applying the configured windowed size afterward.
 
 These settings apply to the application on both platforms, regardless of the
 playback backend. F toggles fullscreen for the current session without changing
-saved configuration. Window-manager support determines the effect of decoration
+saved configuration; leaving fullscreen restores the configured windowed size.
+Window-manager support determines the effect of decoration
 and resize requests; the app does not force compositor-specific window placement
 or focus. Monitor selection, saved geometry, and exclusive display modes are not
 part of these settings.

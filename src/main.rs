@@ -118,7 +118,7 @@ impl App {
     fn action(&mut self, action: Action, ctx: &egui::Context) {
         match action {
             Action::Quit => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
-            Action::Fullscreen => toggle_fullscreen(ctx),
+            Action::Fullscreen => toggle_fullscreen(ctx, &self.settings.config.window),
             Action::SeekBackward | Action::SeekForward | Action::PlayPause => {}
             Action::Back => {
                 self.browser.back();
@@ -205,9 +205,12 @@ impl App {
             });
     }
 }
-fn toggle_fullscreen(ctx: &egui::Context) {
+fn toggle_fullscreen(ctx: &egui::Context, window: &config::WindowConfig) {
     let fullscreen = ctx.input(|i| i.viewport().fullscreen.unwrap_or(false));
     ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(!fullscreen));
+    if fullscreen {
+        ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(window.size.into()));
+    }
 }
 fn elapsed(seconds: f64) -> String {
     let seconds = seconds.max(0.0) as u64;
@@ -289,7 +292,7 @@ impl eframe::App for App {
                     Action::Open | Action::PlayPause => self.playback_command(&["cycle", "pause"]),
                     Action::SeekBackward => self.playback_command(&["seek", "-10", "relative"]),
                     Action::SeekForward => self.playback_command(&["seek", "10", "relative"]),
-                    Action::Fullscreen => toggle_fullscreen(ctx),
+                    Action::Fullscreen => toggle_fullscreen(ctx, &self.settings.config.window),
                     Action::Up => self.playback_command(&["add", "volume", "5"]),
                     Action::Down => self.playback_command(&["add", "volume", "-5"]),
                     Action::Refresh => {}
@@ -411,22 +414,57 @@ fn main() -> eframe::Result {
             std::process::exit(2);
         }
     };
-    let window = &settings.config.window;
+    let options = window_options(&settings.config.window);
+    eframe::run_native(
+        "media-launcher",
+        options,
+        Box::new(move |cc| Ok(Box::new(App::new(cc, settings)))),
+    )
+}
+
+fn window_options(window: &config::WindowConfig) -> eframe::NativeOptions {
     let viewport = egui::ViewportBuilder::default()
         .with_title("Media Launcher")
-        .with_fullscreen(window.mode == config::WindowMode::Fullscreen)
-        .with_maximized(window.mode == config::WindowMode::Maximized)
-        .with_inner_size(window.size)
         .with_decorations(window.decorations)
         .with_resizable(window.resizable)
         .with_app_id("media-launcher");
-    eframe::run_native(
-        "media-launcher",
-        eframe::NativeOptions {
-            viewport,
-            renderer: eframe::Renderer::Glow,
-            ..Default::default()
-        },
-        Box::new(move |cc| Ok(Box::new(App::new(cc, settings)))),
-    )
+    // egui-winit reapplies size and maximized after window creation. On Windows
+    // those can shrink a fullscreen window without restoring its window borders.
+    let viewport = match window.mode {
+        config::WindowMode::Fullscreen => viewport.with_fullscreen(true),
+        config::WindowMode::Maximized => viewport.with_maximized(true),
+        config::WindowMode::Windowed => viewport.with_inner_size(window.size),
+    };
+    eframe::NativeOptions {
+        viewport,
+        centered: window.mode == config::WindowMode::Windowed,
+        renderer: eframe::Renderer::Glow,
+        ..Default::default()
+    }
+}
+
+#[cfg(test)]
+mod window_tests {
+    use super::*;
+
+    #[test]
+    fn startup_mode_does_not_apply_windowed_geometry_to_fullscreen() {
+        let mut window = config::WindowConfig::default();
+        let options = window_options(&window);
+        assert_eq!(options.viewport.fullscreen, Some(true));
+        assert_eq!(options.viewport.inner_size, None);
+        assert_eq!(options.viewport.maximized, None);
+
+        window.mode = config::WindowMode::Maximized;
+        let options = window_options(&window);
+        assert_eq!(options.viewport.maximized, Some(true));
+        assert_eq!(options.viewport.inner_size, None);
+
+        window.mode = config::WindowMode::Windowed;
+        let options = window_options(&window);
+        assert!(options.centered);
+        assert_eq!(options.viewport.inner_size, Some(window.size.into()));
+        assert_eq!(options.viewport.decorations, Some(true));
+        assert_eq!(options.viewport.resizable, Some(true));
+    }
 }

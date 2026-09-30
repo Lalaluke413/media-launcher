@@ -8,8 +8,18 @@ The user's fresh curl.exe download matched the pinned
 a fresh Linux download and GitHub release metadata also matched that pin.
 The bundle script now uses curl.exe, verifies temporary files before caching,
 replaces invalid cache entries, and preserves earlier bundles when retrying.
-Checksums remain unchanged. The revised complete script still needs Windows
-execution; the reason the first download's bytes differed has not been established.
+Checksums remain unchanged. The user subsequently verified successful bundling,
+bundled playback, installer compilation/installation, and launch from Steam.
+The reason the first download's bytes differed has not been established.
+
+The user reported a borderless 720p window at the screen's upper left despite
+fullscreen defaults. Startup previously passed a windowed inner size and
+`maximized = false` alongside fullscreen. egui-winit reapplies those after native
+creation. Startup now supplies only the geometry appropriate to the chosen mode;
+windowed startup requests centering, and leaving fullscreen restores configured
+windowed size. Regression coverage checks these startup attributes. Current
+checks: 19 unit tests passed, Linux Clippy clean, Windows cross-check clean.
+The window fix awaits native Windows verification.
 
 Windows packaging adds a PowerShell bundle builder, pinned SHA-256-verified
 libmpv/yt-dlp/Deno/Vulkan-loader downloads, and an Inno Setup per-user installer.
@@ -30,9 +40,10 @@ The Arch VCS PKGBUILD declares system dependencies. No CI or updater was added.
 
 ## Ready for user testing
 
-PowerShell and Inno Setup are not available here. The Windows bundle script,
-MSVC release build, installer, native playback, and reinstall/upgrade behavior
-have not been executed. Start with packaging/windows/README.md.
+PowerShell and Inno Setup are not available here. The user verified the Windows
+MSVC release build, bundle, installer, native playback, and Steam launch.
+Reinstall/upgrade behavior and the latest window fix still need Windows testing.
+Start with packaging/windows/README.md.
 
 The Arch package definition has not been built, installed, or submitted to AUR.
 It tracks committed upstream Git source; instructions explain how to test a
