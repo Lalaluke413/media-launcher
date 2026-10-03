@@ -100,6 +100,13 @@ and scan the QR code to open the web UI on your phone. Both devices should be on
 the same network. If multiple network addresses are available, select “Next phone
 address” to try another.
 
+The initial address prefers `192.168.x.x`, then `10.x.x.x`, then
+`172.16.x.x` through `172.31.x.x`, followed by other IPv4 addresses. For an
+IPv6 listen address, unique-local addresses (`fc00::/7`) come first. Ties are
+sorted numerically. This uses only the address and cannot distinguish LAN
+interfaces from VPNs or virtual adapters using the same ranges. Your selected
+address is kept across refreshes while it remains available.
+
 While the launcher is running, open `http://COMPUTER-LAN-IP:8765/` on a phone
 on the same network and submit an HTTP or HTTPS media URL. Allow the application
 through your firewall on the local network if needed. Only one playback can run

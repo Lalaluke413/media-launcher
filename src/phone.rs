@@ -13,6 +13,26 @@ pub struct PhoneLink {
     texture: Option<(String, egui::TextureHandle)>,
 }
 
+// An address-only heuristic: private ranges can also belong to VPNs or virtual
+// adapters, so this order cannot guarantee that a phone can reach the address.
+fn lan_priority(ip: IpAddr) -> u8 {
+    match ip {
+        IpAddr::V4(ip) => match ip.octets() {
+            [192, 168, _, _] => 0,
+            [10, _, _, _] => 1,
+            [172, 16..=31, _, _] => 2,
+            _ => 3,
+        },
+        IpAddr::V6(ip) => {
+            if ip.is_unique_local() {
+                0
+            } else {
+                3
+            }
+        }
+    }
+}
+
 fn urls(address: SocketAddr, ips: impl IntoIterator<Item = IpAddr>) -> Vec<String> {
     if address.ip().is_loopback() {
         return vec![];
@@ -26,17 +46,19 @@ fn urls(address: SocketAddr, ips: impl IntoIterator<Item = IpAddr>) -> Vec<Strin
     } else {
         vec![address.ip()]
     };
-    let mut urls: Vec<_> = candidates
+    let mut candidates: Vec<_> = candidates
         .into_iter()
         .filter(|ip| match ip {
             IpAddr::V4(ip) => !ip.is_link_local(),
             IpAddr::V6(ip) => ip.segments()[0] & 0xffc0 != 0xfe80,
         })
-        .map(|ip| format!("http://{}/", SocketAddr::new(ip, address.port())))
         .collect();
-    urls.sort();
-    urls.dedup();
-    urls
+    candidates.sort_unstable_by_key(|ip| (lan_priority(*ip), *ip));
+    candidates.dedup();
+    candidates
+        .into_iter()
+        .map(|ip| format!("http://{}/", SocketAddr::new(ip, address.port())))
+        .collect()
 }
 impl PhoneLink {
     pub fn refresh(&mut self, endpoint: Option<Result<SocketAddr, String>>) {
@@ -151,6 +173,60 @@ impl PhoneLink {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn wildcard_prefers_lan_ranges_with_numeric_ties() {
+        let addresses = [
+            "172.32.0.1",
+            "10.0.0.2",
+            "192.168.1.100",
+            "172.31.255.254",
+            "192.168.1.20",
+            "172.16.0.1",
+            "172.15.255.254",
+            "192.168.1.20",
+        ]
+        .map(|ip| ip.parse().unwrap());
+        let expected = [
+            "192.168.1.20",
+            "192.168.1.100",
+            "10.0.0.2",
+            "172.16.0.1",
+            "172.31.255.254",
+            "172.15.255.254",
+            "172.32.0.1",
+        ]
+        .map(|ip| format!("http://{ip}:4321/"));
+        assert_eq!(urls("0.0.0.0:4321".parse().unwrap(), addresses), expected);
+        assert_eq!(
+            urls("0.0.0.0:4321".parse().unwrap(), addresses.into_iter().rev()),
+            expected
+        );
+        assert_eq!(
+            urls("10.0.0.2:4321".parse().unwrap(), addresses),
+            ["http://10.0.0.2:4321/"]
+        );
+    }
+    #[test]
+    fn wildcard_ipv6_prefers_unique_local_addresses() {
+        let addresses = [
+            "2001:db8::1",
+            "fd00::12",
+            "fc00::2",
+            "fe80::1",
+            "::1",
+            "::",
+            "192.168.1.2",
+        ]
+        .map(|ip| ip.parse().unwrap());
+        assert_eq!(
+            urls("[::]:4321".parse().unwrap(), addresses),
+            [
+                "http://[fc00::2]:4321/",
+                "http://[fd00::12]:4321/",
+                "http://[2001:db8::1]:4321/",
+            ]
+        );
+    }
     #[test]
     fn wildcard_uses_concrete_addresses_and_bound_port() {
         let addresses = [
