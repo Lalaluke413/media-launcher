@@ -1,3 +1,15 @@
+/// Gilrs uses positive Y for up; ties choose the vertical axis.
+pub fn stick_direction(x: f32, y: f32) -> Option<usize> {
+    const DEAD_ZONE: f32 = 0.35;
+    if x.abs().max(y.abs()) <= DEAD_ZONE {
+        None
+    } else if x.abs() > y.abs() {
+        Some(if x < 0.0 { 2 } else { 3 })
+    } else {
+        Some(if y > 0.0 { 0 } else { 1 })
+    }
+}
+
 use std::time::{Duration, Instant};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -112,6 +124,16 @@ impl Input {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn stick_has_exactly_one_cardinal_direction() {
+        assert_eq!(stick_direction(-0.8, 0.5), Some(2));
+        assert_eq!(stick_direction(0.8, -0.5), Some(3));
+        assert_eq!(stick_direction(0.5, 0.8), Some(0));
+        assert_eq!(stick_direction(-0.5, -0.8), Some(1));
+        assert_eq!(stick_direction(0.35, -0.35), None);
+        assert_eq!(stick_direction(0.8, 0.8), Some(0));
+        assert_eq!(stick_direction(-0.8, -0.8), Some(1));
+    }
     #[test]
     fn actions_are_once_per_press_and_disconnect_clears_repeat() {
         let t = Instant::now();

@@ -119,9 +119,10 @@ impl PhoneLink {
         self.show_sized(ui, 200.0);
     }
     pub fn show_sized(&mut self, ui: &mut egui::Ui, qr_size: f32) {
-        ui.label(egui::RichText::new("Phone web UI").size(20.0).strong());
+        self.show_header(ui, qr_size);
+    }
+    pub fn show_header(&mut self, ui: &mut egui::Ui, qr_size: f32) {
         let Some(url) = self.urls.get(self.selected) else {
-            ui.label(&self.message);
             return;
         };
         if self
@@ -157,17 +158,7 @@ impl PhoneLink {
                 .floor()
                 .max(1.0);
         ui.image((texture.id(), egui::vec2(size, size)));
-        ui.hyperlink_to(egui::RichText::new(url).size(14.0), url);
-        ui.label(
-            egui::RichText::new("Scan to open. Connect your phone to the same network.").size(14.0),
-        );
-        if self.multiple() {
-            ui.small(format!(
-                "Address {} of {}",
-                self.selected + 1,
-                self.urls.len()
-            ));
-        }
+        ui.add(egui::Label::new(egui::RichText::new(url).size(16.0)).truncate());
     }
 }
 #[cfg(test)]

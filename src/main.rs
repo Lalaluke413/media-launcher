@@ -1,4 +1,5 @@
 mod browser;
+mod browser_ui;
 mod input;
 mod menu;
 mod phone;
@@ -51,10 +52,18 @@ impl Gamepads {
                     use gilrs::{Axis, Button};
                     let y = pad.value(Axis::LeftStickY);
                     let x = pad.value(Axis::LeftStickX);
-                    controls[0] |= pad.is_pressed(Button::DPadUp) || y > 0.35;
-                    controls[1] |= pad.is_pressed(Button::DPadDown) || y < -0.35;
-                    controls[2] |= pad.is_pressed(Button::DPadLeft) || x < -0.35;
-                    controls[3] |= pad.is_pressed(Button::DPadRight) || x > 0.35;
+                    let stick = input::stick_direction(x, y);
+                    for (index, button) in [
+                        Button::DPadUp,
+                        Button::DPadDown,
+                        Button::DPadLeft,
+                        Button::DPadRight,
+                    ]
+                    .into_iter()
+                    .enumerate()
+                    {
+                        controls[index] |= pad.is_pressed(button) || stick == Some(index);
+                    }
                     let physical = [
                         Button::South,
                         Button::East,
@@ -103,6 +112,7 @@ struct App {
     input: Input,
     pads: Gamepads,
     ensure_visible: bool,
+    camera: browser_ui::Camera,
     web: web::Server,
     phone: phone::PhoneLink,
     panel: Option<menu::Panel>,
@@ -139,6 +149,7 @@ impl App {
             input: Input::new(Instant::now()),
             pads: Gamepads::new(cc.egui_ctx.clone()),
             ensure_visible: true,
+            camera: browser_ui::Camera::default(),
             web: web::Server::new(settings.config.listen, cc.egui_ctx.clone()),
             settings,
             panel: None,
@@ -227,15 +238,13 @@ impl App {
         match action {
             Action::Quit => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
             Action::Fullscreen => toggle_fullscreen(ctx, &self.settings.config.window),
-            Action::Left
-            | Action::Right
-            | Action::PlayPause
+            Action::PlayPause
             | Action::Menu
             | Action::Stop
             | Action::Seek(_)
             | Action::Volume(_)
             | Action::Mute => {}
-            Action::Back => {
+            Action::Back | Action::Left => {
                 self.browser.back();
                 self.ensure_visible = true;
             }
@@ -245,25 +254,20 @@ impl App {
             }
             Action::Up => {
                 self.browser
-                    .select(self.browser.view.selected.saturating_sub(1));
+                    .select(self.browser.selected().saturating_sub(1));
                 self.ensure_visible = true;
             }
             Action::Down => {
                 self.browser
-                    .select(self.browser.view.selected.saturating_add(1));
+                    .select(self.browser.selected().saturating_add(1));
                 self.ensure_visible = true;
             }
-            Action::Confirm => {
+            Action::Confirm | Action::Right => {
                 if self.browser.error.is_some() {
                     self.browser.refresh();
                     return;
                 }
-                let Some(entry) = self
-                    .browser
-                    .entries
-                    .get(self.browser.view.selected)
-                    .cloned()
-                else {
+                let Some(entry) = self.browser.selected_entry().cloned() else {
                     return;
                 };
                 if entry.directory {
@@ -425,7 +429,6 @@ impl eframe::App for App {
         }
 
         if let Some(result) = self.player.poll() {
-            self.browser.refresh();
             if self.panel == Some(menu::Panel::Menu) {
                 self.menu_selected = 0;
             }
@@ -554,127 +557,38 @@ impl eframe::App for App {
         }
         self.phone.refresh(self.web.endpoint());
         ctx.request_repaint_after(Duration::from_secs(10));
-        let phone_only = self.browser.configured_root.is_none();
-        let qr_size = if phone_only { 320.0 } else { 180.0 };
-        let phone_width = (qr_size + 24.0_f32).min(ctx.available_rect().width() * 0.4);
-        egui::SidePanel::right("phone_connection")
-            .resizable(false)
-            .exact_width(phone_width)
+        egui::TopBottomPanel::top("header")
+            .exact_height(116.0)
             .show(ctx, |ui| {
-                ui.add_space(12.0);
-                egui::ScrollArea::vertical().show(ui, |ui| {
-                    self.phone.show_sized(ui, qr_size);
-                    if self.phone.multiple() {
-                        ui.add_space(8.0);
-                        if ui
-                            .button(egui::RichText::new("Next address").size(18.0))
-                            .clicked_by(egui::PointerButton::Primary)
-                        {
-                            self.phone.cycle();
-                        }
-                        ui.label(
-                            egui::RichText::new("Or select Next phone address in Menu.").size(14.0),
-                        );
-                    }
+                ui.horizontal(|ui| {
+                    let name = self
+                        .browser
+                        .selected_entry()
+                        .map(|e| {
+                            e.name
+                                .to_string_lossy()
+                                .chars()
+                                .take(180)
+                                .collect::<String>()
+                        })
+                        .unwrap_or_default();
+                    let phone_width = 360.0_f32.min(ui.available_width() * 0.45);
+                    ui.add_sized(
+                        [ui.available_width() - phone_width, 96.0],
+                        egui::Label::new(name).truncate(),
+                    );
+                    self.phone.show_header(ui, 96.0);
                 });
             });
-        egui::TopBottomPanel::top("path").show(ctx, |ui| {
-            ui.add_space(12.0);
-            ui.horizontal(|ui| {
-                ui.heading("Media Launcher");
-                if ui.button("Menu").clicked_by(egui::PointerButton::Primary) {
-                    self.action(Action::Menu, ctx);
-                }
-            });
-            if phone_only {
-                ui.label("Waiting for media from your phone");
-                if let Some(address) = self.phone.address() {
-                    ui.add(egui::Label::new(format!("Open {address} on your phone")).wrap());
-                }
-            }
-            ui.add(egui::Label::new(self.browser.current.to_string_lossy()).wrap());
-            ui.add_space(8.0);
-        });
-        egui::TopBottomPanel::bottom("controls").show(ctx, |ui| {
-            if let Some(entry) = self.browser.entries.get(self.browser.view.selected) {
-                egui::ScrollArea::vertical()
-                    .id_salt("detail")
-                    .max_height(140.0)
-                    .show(ui, |ui| {
-                        ui.add(egui::Label::new(entry.name.to_string_lossy()).wrap());
-                    });
-            }
-            ui.separator();
-            ui.label(format!(
-                "D-pad Up/Down: Move · {} / Enter: Open · {} / Esc: Back",
-                self.settings.config.controls.buttons[0].label(),
-                self.settings.config.controls.buttons[1].label()
-            ));
-            ui.label(format!(
-                "{} / R: Refresh · {} / M: Menu · Q: Quit",
-                self.settings.config.controls.buttons[2].label(),
-                self.settings.config.controls.buttons[3].label()
-            ));
-        });
         egui::CentralPanel::default().show(ctx, |ui| {
             if let Some(error) = &self.pads.state.lock().unwrap().error {
                 ui.colored_label(egui::Color32::YELLOW, error);
             }
             if let Some(error) = &self.browser.error {
                 ui.colored_label(egui::Color32::LIGHT_RED, error);
-                ui.label("A / Enter or X / R to retry · B / Esc to dismiss · Start / M for menu");
             }
-            if self.browser.entries.is_empty() {
-                if self.browser.configured_root.is_none() {
-                    ui.label("To browse local videos, set root in config.toml or launch with --root PATH.");
-                    ui.label(format!("Configuration: {}", self.settings.config_path.display()));
-                } else {
-                    ui.label("No visible folders or supported videos in this directory.");
-                }
-            }
-            let mut clicked = None;
-            let output = egui::ScrollArea::vertical()
-                .id_salt("files")
-                .vertical_scroll_offset(self.browser.view.scroll)
-                .auto_shrink([false, false])
-                .show_rows(ui, 52.0, self.browser.entries.len(), |ui, range| {
-                    if self.ensure_visible {
-                        let y = (self.browser.view.selected as f32 - range.start as f32)
-                            * (52.0 + ui.spacing().item_spacing.y);
-                        ui.scroll_to_rect(
-                            egui::Rect::from_min_size(
-                                ui.max_rect().min + egui::vec2(0.0, y),
-                                egui::vec2(1.0, 52.0),
-                            ),
-                            None,
-                        );
-                    }
-                    for index in range {
-                        let entry = &self.browser.entries[index];
-                        let selected = index == self.browser.view.selected;
-                        let text = format!(
-                            "{}  {}",
-                            if entry.directory { "[DIR]" } else { "[VIDEO]" },
-                            entry.name.to_string_lossy()
-                        );
-                        let button =
-                            egui::Button::new(egui::RichText::new(text).color(if selected {
-                                egui::Color32::BLACK
-                            } else {
-                                egui::Color32::WHITE
-                            }))
-                            .truncate()
-                            .fill(if selected {
-                                egui::Color32::from_rgb(120, 200, 255)
-                            } else {
-                                egui::Color32::from_gray(28)
-                            });
-                        if ui.add_sized([ui.available_width(), 52.0], button).clicked_by(egui::PointerButton::Primary) {
-                            clicked = Some(index);
-                        }
-                    }
-                });
-            self.browser.view.scroll = output.state.offset.y;
+            let clicked =
+                browser_ui::show(ui, &mut self.browser, &mut self.camera, self.ensure_visible);
             self.ensure_visible = false;
             if let Some(index) = clicked {
                 self.browser.select(index);
