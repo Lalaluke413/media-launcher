@@ -167,6 +167,97 @@ impl PhoneLink {
 mod tests {
     use super::*;
     #[test]
+    fn header_qr_and_address_reach_the_right_edge() {
+        let context = egui::Context::default();
+        let mut phone = PhoneLink {
+            urls: vec!["http://192.168.1.2:8080/".into()],
+            ..Default::default()
+        };
+        let mut right = 0.0;
+        let output = context.run(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(1280.0, 720.0),
+                )),
+                ..Default::default()
+            },
+            |ctx| {
+                egui::TopBottomPanel::top("header")
+                    .exact_height(260.0)
+                    .show(ctx, |ui| {
+                        right = ui.max_rect().right();
+                        ui.add_space(12.0);
+                        crate::header_columns(
+                            ui,
+                            236.0,
+                            |ui| {
+                                ui.label(".");
+                                ui.label("video.mkv");
+                                ui.label("1.00 GB");
+                            },
+                            |ui| {
+                                phone.show_header(ui, 200.0);
+                            },
+                        );
+                    });
+            },
+        );
+        fn flatten<'a>(shape: &'a egui::epaint::Shape, shapes: &mut Vec<&'a egui::epaint::Shape>) {
+            if let egui::epaint::Shape::Vec(children) = shape {
+                for child in children {
+                    flatten(child, shapes);
+                }
+            } else {
+                shapes.push(shape);
+            }
+        }
+        let mut shapes = vec![];
+        for shape in &output.shapes {
+            flatten(&shape.shape, &mut shapes);
+        }
+        let texture = phone.texture.as_ref().unwrap().1.id();
+        let qr = shapes
+            .iter()
+            .find_map(|shape| match shape {
+                egui::epaint::Shape::Mesh(mesh) if mesh.texture_id == texture => {
+                    Some(mesh.calc_bounds())
+                }
+                egui::epaint::Shape::Rect(rect)
+                    if rect
+                        .brush
+                        .as_ref()
+                        .is_some_and(|brush| brush.fill_texture_id == texture) =>
+                {
+                    Some(rect.rect)
+                }
+                _ => None,
+            })
+            .expect("QR image painted");
+        assert!(
+            (qr.right() - right).abs() < 1.0,
+            "QR right {} != header right {right}",
+            qr.right()
+        );
+        let address = shapes
+            .iter()
+            .find_map(|shape| match shape {
+                egui::epaint::Shape::Text(text)
+                    if text.galley.text() == "http://192.168.1.2:8080/" =>
+                {
+                    Some(text.galley.rect.translate(text.pos.to_vec2()))
+                }
+                _ => None,
+            })
+            .expect("address painted");
+        assert!(
+            (address.right() - right).abs() < 1.0,
+            "address right {} != header right {right}",
+            address.right()
+        );
+        assert!(address.top() >= qr.bottom());
+    }
+    #[test]
     fn wildcard_prefers_lan_ranges_with_numeric_ties() {
         let addresses = [
             "172.32.0.1",

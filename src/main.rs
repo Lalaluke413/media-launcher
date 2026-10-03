@@ -403,6 +403,33 @@ fn toggle_fullscreen(ctx: &egui::Context, window: &config::WindowConfig) {
         ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(window.size.into()));
     }
 }
+/// Reserve both header regions even when the left text is short.
+fn header_columns(
+    ui: &mut egui::Ui,
+    height: f32,
+    left: impl FnOnce(&mut egui::Ui),
+    right: impl FnOnce(&mut egui::Ui),
+) {
+    ui.horizontal_top(|ui| {
+        let phone_width = 360.0_f32.min(ui.available_width() * 0.45);
+        let left_width =
+            (ui.available_width() - phone_width - ui.spacing().item_spacing.x).max(0.0);
+        ui.allocate_ui_with_layout(
+            egui::vec2(left_width, height),
+            egui::Layout::top_down(egui::Align::Min),
+            |ui| {
+                ui.set_min_width(left_width);
+                left(ui);
+            },
+        );
+        ui.allocate_ui_with_layout(
+            egui::vec2(phone_width, height),
+            egui::Layout::top_down(egui::Align::Max),
+            right,
+        );
+    });
+}
+
 // Decimal units match the MB/GB labels displayed in the header.
 fn file_size(bytes: u64) -> String {
     if bytes >= 1_000_000_000 {
@@ -597,34 +624,21 @@ impl eframe::App for App {
                     .map(file_size)
                     .unwrap_or_default();
                 ui.add_space(12.0);
-                ui.horizontal_top(|ui| {
-                    let phone_width = 360.0_f32.min(ui.available_width() * 0.45);
-                    let left_width =
-                        (ui.available_width() - phone_width - ui.spacing().item_spacing.x).max(0.0);
-                    ui.allocate_ui_with_layout(
-                        egui::vec2(left_width, HEADER_HEIGHT - 24.0),
-                        egui::Layout::top_down(egui::Align::Min),
-                        |ui| {
-                            ui.add(
-                                egui::Label::new(
-                                    egui::RichText::new(relative_directory).size(26.0),
-                                )
+                header_columns(
+                    ui,
+                    HEADER_HEIGHT - 24.0,
+                    |ui| {
+                        ui.add(
+                            egui::Label::new(egui::RichText::new(relative_directory).size(26.0))
                                 .truncate(),
-                            );
-                            ui.add(egui::Label::new(egui::RichText::new(name).size(36.0)).wrap());
-                            ui.add(
-                                egui::Label::new(egui::RichText::new(size).size(26.0)).truncate(),
-                            );
-                        },
-                    );
-                    ui.allocate_ui_with_layout(
-                        egui::vec2(phone_width, HEADER_HEIGHT - 24.0),
-                        egui::Layout::top_down(egui::Align::Max),
-                        |ui| {
-                            self.phone.show_header(ui, HEADER_QR_SIZE);
-                        },
-                    );
-                });
+                        );
+                        ui.add(egui::Label::new(egui::RichText::new(name).size(36.0)).wrap());
+                        ui.add(egui::Label::new(egui::RichText::new(size).size(26.0)).truncate());
+                    },
+                    |ui| {
+                        self.phone.show_header(ui, HEADER_QR_SIZE);
+                    },
+                );
             });
         egui::CentralPanel::default().show(ctx, |ui| {
             if let Some(error) = &self.pads.state.lock().unwrap().error {
