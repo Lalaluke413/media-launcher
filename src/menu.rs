@@ -117,10 +117,6 @@ impl App {
         }
     }
     fn adjust(&mut self, direction: i32, ctx: &egui::Context) {
-        if self.panel == Some(Panel::Menu) && !self.player.active() && self.menu_selected == 3 {
-            self.phone.cycle();
-            return;
-        }
         if self.panel != Some(Panel::Settings) {
             return;
         }
