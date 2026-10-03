@@ -157,8 +157,10 @@ impl PhoneLink {
             * (qr_size.min(ui.available_width()) / modules)
                 .floor()
                 .max(1.0);
-        ui.image((texture.id(), egui::vec2(size, size)));
-        ui.add(egui::Label::new(egui::RichText::new(url).size(16.0)).truncate());
+        ui.with_layout(egui::Layout::top_down(egui::Align::Max), |ui| {
+            ui.image((texture.id(), egui::vec2(size, size)));
+            ui.add(egui::Label::new(egui::RichText::new(url).size(18.0)).truncate());
+        });
     }
 }
 #[cfg(test)]

@@ -10,6 +10,7 @@ pub struct Entry {
     pub path: PathBuf,
     pub name: OsString,
     pub directory: bool,
+    pub size_bytes: Option<u64>,
 }
 
 pub fn scan(root: &Path, directory: &Path) -> Result<Vec<Entry>, String> {
@@ -60,6 +61,7 @@ pub fn scan(root: &Path, directory: &Path) -> Result<Vec<Entry>, String> {
                 path,
                 name,
                 directory,
+                size_bytes: metadata.is_file().then(|| metadata.len()),
             });
         }
     }
@@ -267,6 +269,7 @@ mod tests {
                 path: PathBuf::from(n.to_string()),
                 name: n.to_string().into(),
                 directory: true,
+                size_bytes: None,
             })
             .collect();
         assert_eq!(
@@ -279,6 +282,7 @@ mod tests {
             path: "video.mkv".into(),
             name: "video.mkv".into(),
             directory: false,
+            size_bytes: None,
         };
         let mut mixed = entries.clone();
         mixed.push(file.clone());

@@ -403,6 +403,15 @@ fn toggle_fullscreen(ctx: &egui::Context, window: &config::WindowConfig) {
         ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(window.size.into()));
     }
 }
+// Decimal units match the MB/GB labels displayed in the header.
+fn file_size(bytes: u64) -> String {
+    if bytes >= 1_000_000_000 {
+        format!("{:.2} GB", bytes as f64 / 1_000_000_000.0)
+    } else {
+        format!("{:.2} MB", bytes as f64 / 1_000_000.0)
+    }
+}
+
 fn elapsed(seconds: f64) -> String {
     let seconds = seconds.max(0.0) as u64;
     format!("{}:{:02}", seconds / 60, seconds % 60)
@@ -557,30 +566,64 @@ impl eframe::App for App {
         }
         self.phone.refresh(self.web.endpoint());
         ctx.request_repaint_after(Duration::from_secs(10));
+        const HEADER_HEIGHT: f32 = 260.0;
+        const HEADER_QR_SIZE: f32 = 200.0;
         egui::TopBottomPanel::top("header")
-            .exact_height(116.0)
+            .exact_height(HEADER_HEIGHT)
             .show(ctx, |ui| {
-                ui.horizontal(|ui| {
-                    let name = self
-                        .browser
-                        .selected_entry()
-                        .map(|e| {
-                            e.name
-                                .to_string_lossy()
-                                .chars()
-                                .take(180)
-                                .collect::<String>()
-                        })
-                        .unwrap_or_default();
+                let relative_directory = self
+                    .browser
+                    .current()
+                    .and_then(|column| {
+                        self.browser
+                            .root
+                            .as_ref()
+                            .and_then(|root| column.directory.strip_prefix(root).ok())
+                    })
+                    .map(|path| {
+                        if path.as_os_str().is_empty() {
+                            ".".to_owned()
+                        } else {
+                            path.to_string_lossy().into_owned()
+                        }
+                    })
+                    .unwrap_or_default();
+                let entry = self.browser.selected_entry();
+                let name = entry
+                    .map(|entry| entry.name.to_string_lossy().into_owned())
+                    .unwrap_or_default();
+                let size = entry
+                    .and_then(|entry| entry.size_bytes)
+                    .map(file_size)
+                    .unwrap_or_default();
+                ui.add_space(12.0);
+                ui.horizontal_top(|ui| {
                     let phone_width = 360.0_f32.min(ui.available_width() * 0.45);
+                    let left_width =
+                        (ui.available_width() - phone_width - ui.spacing().item_spacing.x).max(0.0);
                     ui.allocate_ui_with_layout(
-                        egui::vec2(ui.available_width() - phone_width, 96.0),
-                        egui::Layout::left_to_right(egui::Align::Center),
+                        egui::vec2(left_width, HEADER_HEIGHT - 24.0),
+                        egui::Layout::top_down(egui::Align::Min),
                         |ui| {
-                            ui.add(egui::Label::new(name).truncate());
+                            ui.add(
+                                egui::Label::new(
+                                    egui::RichText::new(relative_directory).size(26.0),
+                                )
+                                .truncate(),
+                            );
+                            ui.add(egui::Label::new(egui::RichText::new(name).size(36.0)).wrap());
+                            ui.add(
+                                egui::Label::new(egui::RichText::new(size).size(26.0)).truncate(),
+                            );
                         },
                     );
-                    self.phone.show_header(ui, 96.0);
+                    ui.allocate_ui_with_layout(
+                        egui::vec2(phone_width, HEADER_HEIGHT - 24.0),
+                        egui::Layout::top_down(egui::Align::Max),
+                        |ui| {
+                            self.phone.show_header(ui, HEADER_QR_SIZE);
+                        },
+                    );
                 });
             });
         egui::CentralPanel::default().show(ctx, |ui| {
@@ -643,6 +686,14 @@ fn window_options(window: &config::WindowConfig) -> eframe::NativeOptions {
 mod window_tests {
     use super::*;
 
+    #[test]
+    fn header_file_sizes_switch_units_at_one_gigabyte() {
+        assert_eq!(file_size(0), "0.00 MB");
+        assert_eq!(file_size(500_000_000), "500.00 MB");
+        assert_eq!(file_size(999_999_999), "1000.00 MB");
+        assert_eq!(file_size(1_000_000_000), "1.00 GB");
+        assert_eq!(file_size(2_500_000_000), "2.50 GB");
+    }
     #[test]
     fn startup_mode_does_not_apply_windowed_geometry_to_fullscreen() {
         let mut window = config::WindowConfig::default();
