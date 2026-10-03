@@ -69,9 +69,15 @@ pub fn show(
         } else {
             ColumnRole::Ancestor
         };
+        // The current directory has no following hierarchy boundary. Its rows
+        // fill the viewport; the retained width still positions future columns.
+        let render_width = match role {
+            ColumnRole::Current => (viewport.right() - x).max(0.0),
+            ColumnRole::Ancestor => column.width,
+        };
         let rect = egui::Rect::from_min_size(
             egui::pos2(x, viewport.top()),
-            egui::vec2(column.width, viewport.height()),
+            egui::vec2(render_width, viewport.height()),
         );
         let clip = rect.intersect(viewport);
         if matches!(role, ColumnRole::Current) {
@@ -105,7 +111,7 @@ pub fn show(
                     x,
                     viewport.top() + row as f32 * ROW_HEIGHT - column.view.scroll,
                 ),
-                egui::vec2(column.width, ROW_HEIGHT),
+                egui::vec2(render_width, ROW_HEIGHT),
             );
             if !row_rect.intersects(clip) {
                 continue;
@@ -136,7 +142,7 @@ pub fn show(
                 font.clone(),
                 foreground,
             );
-            let overflow = galley.size().x > column.width - 2.0 * COLUMN_PADDING_X;
+            let overflow = galley.size().x > render_width - 2.0 * COLUMN_PADDING_X;
             let text_clip = row_rect
                 .shrink2(egui::vec2(COLUMN_PADDING_X, 0.0))
                 .intersect(clip);

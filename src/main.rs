@@ -573,9 +573,12 @@ impl eframe::App for App {
                         })
                         .unwrap_or_default();
                     let phone_width = 360.0_f32.min(ui.available_width() * 0.45);
-                    ui.add_sized(
-                        [ui.available_width() - phone_width, 96.0],
-                        egui::Label::new(name).truncate(),
+                    ui.allocate_ui_with_layout(
+                        egui::vec2(ui.available_width() - phone_width, 96.0),
+                        egui::Layout::left_to_right(egui::Align::Center),
+                        |ui| {
+                            ui.add(egui::Label::new(name).truncate());
+                        },
                     );
                     self.phone.show_header(ui, 96.0);
                 });
