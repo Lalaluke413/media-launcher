@@ -125,6 +125,7 @@ struct App {
 impl App {
     fn new(cc: &eframe::CreationContext<'_>, settings: config::Settings) -> Self {
         cc.egui_ctx.set_zoom_factor(settings.config.ui_scale);
+        cc.egui_ctx.set_theme(egui::ThemePreference::Dark);
         cc.egui_ctx.set_visuals(egui::Visuals::dark());
         let mut style = (*cc.egui_ctx.style()).clone();
         style
@@ -273,7 +274,7 @@ impl App {
                 if entry.directory {
                     self.browser.navigate(entry.path);
                     self.ensure_visible = true;
-                } else {
+                } else if action == Action::Confirm {
                     let result = self
                         .browser
                         .media_path(&entry)
